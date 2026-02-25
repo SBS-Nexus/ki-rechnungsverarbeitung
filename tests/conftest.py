@@ -14,18 +14,19 @@ class _DummyConnection:
         return False
 
     def execute(self, *args, **kwargs):
-        # tut nichts, gibt aber etwas Zurück, das wie ein Result aussieht
         return []
 
     def close(self):
         pass
+
+    def in_transaction(self):
+        return False
 
 
 class _DummyEngine:
     url = DUMMY_URL
 
     def connect(self):
-        # Liefert eine Fake-Connection zurück, die alle Operationen schluckt
         return _DummyConnection()
 
 
@@ -35,7 +36,6 @@ def _dummy_create_engine(*args, **kwargs):
 
 @pytest.fixture(autouse=True, scope="session")
 def patch_db_engine():
-    # Wir patchen genau die Engine-Factory im Session-Modul
     with patch(
         "shared.db.session.get_engine",
         side_effect=_dummy_create_engine,
