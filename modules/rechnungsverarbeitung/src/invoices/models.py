@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from shared.tenant.context import TenantContext
@@ -26,7 +26,7 @@ class InvoiceDocumentMetadata:
         uploaded_by: Optional[str] = None,
     ) -> "InvoiceDocumentMetadata":
         """Factory zum konsistenten Erzeugen von Metadaten für neue Uploads."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         tenant_id = TenantContext.get_current_tenant()
         return InvoiceDocumentMetadata(
             id=document_id,

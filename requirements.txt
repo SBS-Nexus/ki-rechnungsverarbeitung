@@ -33,3 +33,7 @@ typing_extensions==4.15.0
 tzdata==2025.2
 anthropic
 python-pptx==1.0.2
+
+pytest
+pytest-asyncio
+httpx

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any, Optional
 
 from shared.db.session import get_session
@@ -37,7 +37,7 @@ def log_invoice_event(
         status_from=status_from,
         status_to=status_to,
         actor=actor,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC),
         # Hinweis: In der DB ist metadata aktuell ein generisches Feld;
         # im API serialisieren wir es konservativ als {}.
         metadata=metadata or {},

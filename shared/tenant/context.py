@@ -22,3 +22,8 @@ class TenantContext:
             # Fallback für lokale Entwicklung / CLI-Tools
             return "default-tenant"
         return tenant_id
+
+    @staticmethod
+    def reset() -> None:
+        """Setzt den TenantContext zurück – nur für Tests verwenden."""
+        _tenant_id_ctx.set(None)
