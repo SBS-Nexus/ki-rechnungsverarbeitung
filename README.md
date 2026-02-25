@@ -1,3 +1,5 @@
+[![Tests](https://github.com/SBS-Nexus/ki-rechnungsverarbeitung/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/SBS-Nexus/ki-rechnungsverarbeitung/actions/workflows/tests.yml)
+
 # 🤖 SBS KI-Rechnungsverarbeitung
 
 ![Tests](https://github.com/Luyzz22/ki-rechnungsverarbeitung/actions/workflows/tests.yml/badge.svg)
