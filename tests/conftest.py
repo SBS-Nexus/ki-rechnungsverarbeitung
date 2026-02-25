@@ -6,6 +6,20 @@ import pytest
 DUMMY_URL = "postgresql+psycopg://dummy/dummy"
 
 
+class _DummyTransaction:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
 class _DummyConnection:
     def __enter__(self):
         return self
@@ -21,6 +35,9 @@ class _DummyConnection:
 
     def in_transaction(self):
         return False
+
+    def begin(self):
+        return _DummyTransaction()
 
 
 class _DummyEngine:
