@@ -93,6 +93,113 @@ Das Projekt verwendet ein konsistentes Design-System (seit v4.0).
 
 ---
 
+---
+
+## 🏢 Enterprise Architecture
+
+### Multi-Tenant Design
+
+Das System ist von Grund auf mandantenfähig (Multi-Tenant) aufgebaut:
+
+- Jede Rechnung gehört zu einem `tenant_id` – vollständige Datenisolierung
+- Jeder API-Call erfordert `X-Tenant-ID` Header
+- `TenantContext` wird zentral über alle Services durchgereicht
+- Kein Cross-Tenant Datenzugriff möglich
+
+### Status State Machine
+
+Jede Rechnung durchläuft einen definierten Lifecycle:
+
+```
+None → uploaded → extracted → validated → booked
+                                       ↘ failed
+```
+
+| Status | Event-Typ | Beschreibung |
+|---|---|---|
+| `uploaded` | `upload_received` | Datei erfolgreich angenommen |
+| `extracted` | `extraction_completed` | KI-Extraktion abgeschlossen |
+| `validated` | `validation_succeeded` | Fachliche Prüfung bestanden |
+| `booked` | `booking_succeeded` | ERP-Übergabe erfolgt |
+| `failed` | `*_failed` | Fehler mit Grund in metadata |
+
+### Mandantenfähiges Event-Log
+
+Jeder Statuswechsel wird als unveränderliches Business-Event in `invoice_events` persistiert:
+
+```json
+{
+  "id": 11,
+  "tenant_id": "tenant-a",
+  "document_id": "3b28aa54-...",
+  "event_type": "booking_succeeded",
+  "status_from": "validated",
+  "status_to": "booked",
+  "actor": "user-a",
+  "created_at": "2026-02-25T18:58:50.226973+01:00"
+}
+```
+
+---
+
+## 🚀 API Endpoints
+
+| Method | Endpoint | Beschreibung |
+|---|---|---|
+| `POST` | `/invoices/upload` | Rechnung hochladen |
+| `GET` | `/invoices` | Alle Rechnungen des Tenants |
+| `GET` | `/invoices/{document_id}` | Einzelne Rechnung |
+| `GET` | `/invoices/{document_id}/events` | Event-Timeline einer Rechnung |
+| `GET` | `/health` | Health Check |
+
+### Beispiel: Upload
+
+```bash
+curl -X POST "http://localhost:8000/invoices/upload" \
+  -H "X-Tenant-ID: tenant-a" \
+  -H "X-User-ID: user-a" \
+  -F "file=@rechnung.pdf"
+```
+
+### Beispiel: Event-Timeline
+
+```bash
+curl -X GET "http://localhost:8000/invoices/{document_id}/events" \
+  -H "X-Tenant-ID: tenant-a"
+```
+
+---
+
+## 🖥️ CLI: Invoice Events
+
+Für Monitoring, Debugging und Automatisierung steht ein CLI-Script bereit:
+
+```bash
+# Events der letzten 120 Minuten für tenant-a
+python -m modules.rechnungsverarbeitung.src.invoices.scripts.print_new_events \
+  --tenant-id tenant-a \
+  --since-minutes 120
+
+# Nur booking_succeeded-Events des letzten Tages
+python -m modules.rechnungsverarbeitung.src.invoices.scripts.print_new_events \
+  --tenant-id tenant-a \
+  --since-minutes 1440 \
+  --event-types booking_succeeded
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Komponente | Technologie |
+|---|---|
+| API Framework | FastAPI (Python 3.13) |
+| Datenbank | PostgreSQL (SQLAlchemy ORM) |
+| Multi-Tenancy | TenantContext (Thread-local) |
+| Event-Log | `invoice_events` Postgres-Tabelle |
+| KI-Extraktion | GPT-4o + Claude (Multi-Model) |
+| Hosting | Deutschland / EU (DSGVO-konform) |
+
 ## 📞 Kontakt
 
 **SBS Deutschland GmbH & Co. KG**
