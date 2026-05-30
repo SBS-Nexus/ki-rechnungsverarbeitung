@@ -970,10 +970,10 @@ init_users_table()
 
 def create_user(email: str, password: str, name: str = '', company: str = '') -> int:
     """Create new user, returns user_id"""
-    import hashlib
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+    from password_utils import hash_password
+
+    password_hash = hash_password(password)
+
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -993,30 +993,38 @@ def create_user(email: str, password: str, name: str = '', company: str = '') ->
 
 def verify_user(email: str, password: str) -> dict:
     """Verify user credentials, returns user dict or None"""
-    import hashlib
     from datetime import datetime
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+    from password_utils import verify_password, needs_rehash, hash_password
+
     conn = get_connection()
     cursor = conn.cursor()
-    
+
+    # Hash NICHT mehr in der SQL-WHERE-Klausel vergleichen – stattdessen den
+    # gespeicherten Hash laden und mit verify_password() prüfen. Das erlaubt
+    # bcrypt/PBKDF2 (gesalzen) und unterstützt Legacy-SHA-256 weiterhin.
     cursor.execute('''
-        SELECT id, email, name, company, is_active 
-        FROM users 
-        WHERE email = ? AND password_hash = ?
-    ''', (email, password_hash))
-    
+        SELECT id, email, name, company, is_active, password_hash
+        FROM users
+        WHERE email = ?
+    ''', (email,))
+
     row = cursor.fetchone()
-    
-    if row and row[4]:  # is_active
+
+    if row and row[4] and verify_password(password, row[5]):  # is_active + Passwort korrekt
+        # Transparentes Upgrade veralteter Hashes auf das starke Verfahren
+        if needs_rehash(row[5]):
+            try:
+                cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?',
+                              (hash_password(password), row[0]))
+            except Exception:
+                pass
         # Update last login
-        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?', 
+        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?',
                       (datetime.now().isoformat(), row[0]))
         conn.commit()
         conn.close()
         return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3]}
-    
+
     conn.close()
     return None
 
@@ -1084,10 +1092,10 @@ init_users_table()
 
 def create_user(email: str, password: str, name: str = '', company: str = '') -> int:
     """Create new user, returns user_id"""
-    import hashlib
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+    from password_utils import hash_password
+
+    password_hash = hash_password(password)
+
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -1107,30 +1115,38 @@ def create_user(email: str, password: str, name: str = '', company: str = '') ->
 
 def verify_user(email: str, password: str) -> dict:
     """Verify user credentials, returns user dict or None"""
-    import hashlib
     from datetime import datetime
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+    from password_utils import verify_password, needs_rehash, hash_password
+
     conn = get_connection()
     cursor = conn.cursor()
-    
+
+    # Hash NICHT mehr in der SQL-WHERE-Klausel vergleichen – stattdessen den
+    # gespeicherten Hash laden und mit verify_password() prüfen. Das erlaubt
+    # bcrypt/PBKDF2 (gesalzen) und unterstützt Legacy-SHA-256 weiterhin.
     cursor.execute('''
-        SELECT id, email, name, company, is_active 
-        FROM users 
-        WHERE email = ? AND password_hash = ?
-    ''', (email, password_hash))
-    
+        SELECT id, email, name, company, is_active, password_hash
+        FROM users
+        WHERE email = ?
+    ''', (email,))
+
     row = cursor.fetchone()
-    
-    if row and row[4]:  # is_active
+
+    if row and row[4] and verify_password(password, row[5]):  # is_active + Passwort korrekt
+        # Transparentes Upgrade veralteter Hashes auf das starke Verfahren
+        if needs_rehash(row[5]):
+            try:
+                cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?',
+                              (hash_password(password), row[0]))
+            except Exception:
+                pass
         # Update last login
-        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?', 
+        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?',
                       (datetime.now().isoformat(), row[0]))
         conn.commit()
         conn.close()
         return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3]}
-    
+
     conn.close()
     return None
 
@@ -1698,24 +1714,24 @@ def verify_reset_token(token: str) -> Optional[int]:
 
 def reset_password(token: str, new_password: str) -> bool:
     """Reset user password with token"""
-    import bcrypt
-    
+    from password_utils import hash_password
+
     user_id = verify_reset_token(token)
     if not user_id:
         return False
-    
+
     conn = get_connection()
     cursor = conn.cursor()
-    
-    # Hash new password
-    password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
-    
+
+    # Hash new password (bcrypt bzw. PBKDF2 – zentral via password_utils)
+    password_hash = hash_password(new_password)
+
     # Update password
     cursor.execute('''
-        UPDATE users 
+        UPDATE users
         SET password_hash = ?
         WHERE id = ?
-    ''', (password_hash.decode('utf-8'), user_id))
+    ''', (password_hash, user_id))
     
     # Mark token as used
     cursor.execute('''

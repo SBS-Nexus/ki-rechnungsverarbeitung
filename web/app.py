@@ -1356,10 +1356,10 @@ async def create_user(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     
     from database import get_connection
-    import hashlib
-    
+    from password_utils import hash_password
+
     data = await request.json()
-    password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
+    password_hash = hash_password(data["password"])
     
     conn = get_connection()
     cursor = conn.cursor()
