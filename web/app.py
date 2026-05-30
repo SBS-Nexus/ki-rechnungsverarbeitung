@@ -166,6 +166,18 @@ async def validation_handler(request, exc: ValidationError):
     app_logger.warning(f"Validation error: {exc.message}")
     return JSONResponse(status_code=422, content=exc.to_dict())
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):
+    """Fängt sonst unbehandelte Fehler ab – KEINE Stack-Traces/Internas in der
+    Response. HTTPException/Validation werden von ihren spezifischeren Handlern
+    verarbeitet und erreichen diesen Handler nicht.
+    """
+    app_logger.exception(f"Unhandled exception on {request.method} {request.url.path}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Interner Serverfehler", "code": "internal_error"},
+    )
+
 @app.middleware("http")
 async def add_security_headers(request, call_next):
     """Fügt Security Headers zu allen Responses hinzu"""
@@ -175,6 +187,22 @@ async def add_security_headers(request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # HSTS – erzwingt HTTPS (Auslieferung erfolgt über Nginx/TLS)
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    # CSP – bewusst kompatibel gehalten (inline-Styles/Skripte des Bestands-UI
+    # bleiben erlaubt), blockiert aber Objekt-Einbettung und Framing durch Dritte.
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' data: https:; "
+        "connect-src 'self' https:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'self'",
+    )
     return response
 
 @app.middleware("http")
@@ -280,27 +308,29 @@ async def upload_files(request: Request, files: List[UploadFile] = File(default=
     upload_path.mkdir(exist_ok=True)
 
     uploaded_files = []
-    MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
+    from file_validation import validate_upload, safe_filename
 
     for file in files:
-        # Nur PDFs verarbeiten
-        if not file.filename.lower().endswith(".pdf"):
+        # Inhalt einlesen und per Magic-Bytes validieren (PDF/PNG/JPG),
+        # Größenlimit prüfen – Dateiendung allein ist nicht vertrauenswürdig.
+        content = await file.read()
+        check = validate_upload(file.filename, content)
+        if not check.ok:
+            app_logger.warning(
+                f"Upload abgelehnt ({file.filename}): {check.reason}"
+            )
             continue
 
-        file_path = upload_path / file.filename
-
-        # Optional: rudimentärer Größen-Check (wenn verfügbar)
-        size = getattr(file, "size", None)
-        if size is not None and size > MAX_FILE_SIZE:
-            # Im DEV: einfach überspringen
-            continue
+        # Path-Traversal verhindern: nur sicheren Basenamen verwenden
+        fname = safe_filename(file.filename, fallback_ext=check.detected_ext)
+        file_path = upload_path / fname
 
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(content)
 
         uploaded_files.append(
             {
-                "filename": file.filename,
+                "filename": fname,
                 "size": file_path.stat().st_size,
             }
         )
@@ -309,7 +339,7 @@ async def upload_files(request: Request, files: List[UploadFile] = File(default=
     if not uploaded_files:
         return JSONResponse(
             status_code=400,
-            content={"error": "Keine gültigen PDF-Dateien hochgeladen."},
+            content={"error": "Keine gültigen Dateien hochgeladen (erlaubt: PDF, PNG, JPG)."},
         )
 
     # 4) Job in processing_jobs ablegen (RAM – wird von /api/process genutzt)
@@ -1608,7 +1638,20 @@ import secrets
 
 from email_scheduler import email_scheduler
 # Add session middleware (muss nach app = FastAPI() kommen)
-app.add_middleware(SessionMiddleware, secret_key='sbs-invoice-app-secret-key-2025', domain='.sbsdeutschland.com')
+# Session-Secret aus Umgebungsvariable (Fallback nur für Bestands-Kompatibilität).
+_SESSION_SECRET = os.getenv("SESSION_SECRET_KEY") or 'sbs-invoice-app-secret-key-2025'
+if _SESSION_SECRET == 'sbs-invoice-app-secret-key-2025':
+    logger.warning(
+        "SESSION_SECRET_KEY nicht gesetzt – verwende unsicheren Default. "
+        "Bitte in /etc/default/invoice-app setzen."
+    )
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_SESSION_SECRET,
+    domain='.sbsdeutschland.com',
+    https_only=True,
+    same_site='lax',
+)
 
 # -------------------------------------------------
 # Login-Helper & globale Login-Pflicht
