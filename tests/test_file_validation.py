@@ -31,6 +31,13 @@ def test_rejects_unallowed_extension_even_if_content_ok():
     assert not fv.validate_upload("malware.exe", PDF).ok
 
 
+def test_allowed_exts_restriction_pdf_only():
+    # Upload-Endpoint erlaubt aktuell nur PDF (Pipeline ist PDF-only)
+    assert fv.validate_upload("r.pdf", PDF, allowed_exts={".pdf"}).ok
+    assert not fv.validate_upload("scan.png", PNG, allowed_exts={".pdf"}).ok
+    assert not fv.validate_upload("foto.jpg", JPG, allowed_exts={".pdf"}).ok
+
+
 def test_safe_filename_blocks_path_traversal():
     assert "/" not in fv.safe_filename("../../etc/passwd")
     assert "\\" not in fv.safe_filename("..\\..\\windows\\system32\\cmd")

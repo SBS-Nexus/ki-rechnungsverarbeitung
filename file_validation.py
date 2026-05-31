@@ -65,8 +65,17 @@ def safe_filename(filename: str, fallback_ext: str = "") -> str:
     return base[:200]
 
 
-def validate_upload(filename: str, content: bytes) -> FileCheck:
-    """Validiert eine hochgeladene Datei (Inhalt + Endung + Größe)."""
+def validate_upload(
+    filename: str,
+    content: bytes,
+    allowed_exts: set[str] | None = None,
+) -> FileCheck:
+    """Validiert eine hochgeladene Datei (Inhalt + Endung + Größe).
+
+    allowed_exts schränkt – bezogen auf den per Magic-Bytes erkannten Typ –
+    die zulässigen Formate ein (z. B. {".pdf"}). None = alle unterstützten
+    Signaturen (PDF/PNG/JPG).
+    """
     if not content:
         return FileCheck(ok=False, reason="leere Datei")
 
@@ -84,6 +93,12 @@ def validate_upload(filename: str, content: bytes) -> FileCheck:
         )
 
     ext, mime = detected
+
+    if allowed_exts is not None and ext not in allowed_exts:
+        return FileCheck(
+            ok=False,
+            reason=f"Dateityp aktuell nicht zulässig (erlaubt: {', '.join(sorted(allowed_exts))})",
+        )
 
     # Endung des Originalnamens grob plausibilisieren (Defense-in-Depth)
     orig_ext = os.path.splitext(filename or "")[1].lower()

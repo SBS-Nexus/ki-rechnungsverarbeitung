@@ -314,7 +314,11 @@ async def upload_files(request: Request, files: List[UploadFile] = File(default=
         # Inhalt einlesen und per Magic-Bytes validieren (PDF/PNG/JPG),
         # Größenlimit prüfen – Dateiendung allein ist nicht vertrauenswürdig.
         content = await file.read()
-        check = validate_upload(file.filename, content)
+        # Aktuell verarbeitet die Pipeline ausschließlich PDFs (siehe
+        # process_invoices_background -> glob("*.pdf")). Bild-Uploads (PNG/JPG)
+        # werden erst mit der OCR-Erweiterung in Phase 2 freigeschaltet –
+        # bis dahin abweisen, statt fälschlich Erfolg zu melden.
+        check = validate_upload(file.filename, content, allowed_exts={".pdf"})
         if not check.ok:
             app_logger.warning(
                 f"Upload abgelehnt ({file.filename}): {check.reason}"
@@ -339,7 +343,7 @@ async def upload_files(request: Request, files: List[UploadFile] = File(default=
     if not uploaded_files:
         return JSONResponse(
             status_code=400,
-            content={"error": "Keine gültigen Dateien hochgeladen (erlaubt: PDF, PNG, JPG)."},
+            content={"error": "Keine gültigen Dateien hochgeladen (erlaubt: PDF)."},
         )
 
     # 4) Job in processing_jobs ablegen (RAM – wird von /api/process genutzt)

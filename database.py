@@ -1875,8 +1875,8 @@ def verify_reset_token(token: str) -> Optional[int]:
 
 
 def reset_password(token: str, new_password: str) -> bool:
-    """Reset user password with token, using sha256 hashing (wie create_user)."""
-    import hashlib
+    """Reset user password with token, using zentrales sicheres Hashing."""
+    from password_utils import hash_password
 
     user_id = verify_reset_token(token)
     if not user_id:
@@ -1885,7 +1885,7 @@ def reset_password(token: str, new_password: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
 
-    password_hash = hashlib.sha256(new_password.encode("utf-8")).hexdigest()
+    password_hash = hash_password(new_password)
     cursor.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",
         (password_hash, user_id),
