@@ -446,6 +446,13 @@ async def process_invoices_background(job_id: str):
             # invoice = Invoice.from_dict(data)  # DISABLED - keeps German fields
             # invoice.filename = pdf_path.name
             data["filename"] = pdf_path.name
+            # Phase 2a: Pflichtangaben (§14 UStG) + IBAN/USt-IdNr prüfen und
+            # Befund anhängen (additiv, beeinflusst die Extraktion nicht).
+            try:
+                from invoice_validation import validate_invoice
+                data["validierung"] = validate_invoice(data)
+            except Exception as _val_err:  # Validierung darf Verarbeitung nie blockieren
+                app_logger.warning(f"Validierung übersprungen ({pdf_path.name}): {_val_err}")
             return ("success", data, pdf_path.name)
         except Exception as e:
             return ("error", str(e), pdf_path.name)
