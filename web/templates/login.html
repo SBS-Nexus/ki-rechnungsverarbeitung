@@ -161,6 +161,7 @@
     {% endif %}
     
     <form method="POST" action="/login?next={{ request.query_params.get('next', '/history') }}">
+      <input type="hidden" name="csrf_token" value="{{ request.session.get('csrf_token', '') }}">
       <div class="form-group">
         <label>Email</label>
         <input type="email" name="email" class="form-input" required placeholder="ihre@email.de">

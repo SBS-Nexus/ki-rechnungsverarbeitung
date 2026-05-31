@@ -42,7 +42,8 @@ from web.routes_oauth import router as oauth_router
 from invoice_api import router as invoice_router  # NEU
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, BackgroundTasks, Depends
+from csrf import require_csrf
 # Nexus Gateway Integration
 import sys
 sys.path.insert(0, "/var/www/invoice-app")
@@ -166,6 +167,18 @@ async def validation_handler(request, exc: ValidationError):
     app_logger.warning(f"Validation error: {exc.message}")
     return JSONResponse(status_code=422, content=exc.to_dict())
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):
+    """Fängt sonst unbehandelte Fehler ab – KEINE Stack-Traces/Internas in der
+    Response. HTTPException/Validation werden von ihren spezifischeren Handlern
+    verarbeitet und erreichen diesen Handler nicht.
+    """
+    app_logger.exception(f"Unhandled exception on {request.method} {request.url.path}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Interner Serverfehler", "code": "internal_error"},
+    )
+
 @app.middleware("http")
 async def add_security_headers(request, call_next):
     """Fügt Security Headers zu allen Responses hinzu"""
@@ -175,6 +188,22 @@ async def add_security_headers(request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # HSTS – erzwingt HTTPS (Auslieferung erfolgt über Nginx/TLS)
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    # CSP – bewusst kompatibel gehalten (inline-Styles/Skripte des Bestands-UI
+    # bleiben erlaubt), blockiert aber Objekt-Einbettung und Framing durch Dritte.
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' data: https:; "
+        "connect-src 'self' https:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'self'",
+    )
     return response
 
 @app.middleware("http")
@@ -280,27 +309,33 @@ async def upload_files(request: Request, files: List[UploadFile] = File(default=
     upload_path.mkdir(exist_ok=True)
 
     uploaded_files = []
-    MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
+    from file_validation import validate_upload, safe_filename
 
     for file in files:
-        # Nur PDFs verarbeiten
-        if not file.filename.lower().endswith(".pdf"):
+        # Inhalt einlesen und per Magic-Bytes validieren (PDF/PNG/JPG),
+        # Größenlimit prüfen – Dateiendung allein ist nicht vertrauenswürdig.
+        content = await file.read()
+        # Aktuell verarbeitet die Pipeline ausschließlich PDFs (siehe
+        # process_invoices_background -> glob("*.pdf")). Bild-Uploads (PNG/JPG)
+        # werden erst mit der OCR-Erweiterung in Phase 2 freigeschaltet –
+        # bis dahin abweisen, statt fälschlich Erfolg zu melden.
+        check = validate_upload(file.filename, content, allowed_exts={".pdf"})
+        if not check.ok:
+            app_logger.warning(
+                f"Upload abgelehnt ({file.filename}): {check.reason}"
+            )
             continue
 
-        file_path = upload_path / file.filename
-
-        # Optional: rudimentärer Größen-Check (wenn verfügbar)
-        size = getattr(file, "size", None)
-        if size is not None and size > MAX_FILE_SIZE:
-            # Im DEV: einfach überspringen
-            continue
+        # Path-Traversal verhindern: nur sicheren Basenamen verwenden
+        fname = safe_filename(file.filename, fallback_ext=check.detected_ext)
+        file_path = upload_path / fname
 
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(content)
 
         uploaded_files.append(
             {
-                "filename": file.filename,
+                "filename": fname,
                 "size": file_path.stat().st_size,
             }
         )
@@ -309,7 +344,7 @@ async def upload_files(request: Request, files: List[UploadFile] = File(default=
     if not uploaded_files:
         return JSONResponse(
             status_code=400,
-            content={"error": "Keine gültigen PDF-Dateien hochgeladen."},
+            content={"error": "Keine gültigen Dateien hochgeladen (erlaubt: PDF)."},
         )
 
     # 4) Job in processing_jobs ablegen (RAM – wird von /api/process genutzt)
@@ -403,6 +438,12 @@ async def process_invoices_background(job_id: str):
                 data = einv_data
                 data['extraction_method'] = 'einvoice'
                 data['ki_score'] = 99  # Strukturierte Daten = höchste Confidence
+                # Phase 2b: EN-16931-Konformitätsbefund anhängen
+                try:
+                    from invoice_validation import check_en16931_conformance
+                    data['en16931'] = check_en16931_conformance(data)
+                except Exception as _en_err:
+                    app_logger.warning(f"EN16931-Prüfung übersprungen ({pdf_path.name}): {_en_err}")
             else:
                 # Keine E-Rechnung - nutze KI-Extraktion
                 data = processor.process_invoice(pdf_path)
@@ -412,6 +453,13 @@ async def process_invoices_background(job_id: str):
             # invoice = Invoice.from_dict(data)  # DISABLED - keeps German fields
             # invoice.filename = pdf_path.name
             data["filename"] = pdf_path.name
+            # Phase 2a: Pflichtangaben (§14 UStG) + IBAN/USt-IdNr prüfen und
+            # Befund anhängen (additiv, beeinflusst die Extraktion nicht).
+            try:
+                from invoice_validation import validate_invoice
+                data["validierung"] = validate_invoice(data)
+            except Exception as _val_err:  # Validierung darf Verarbeitung nie blockieren
+                app_logger.warning(f"Validierung übersprungen ({pdf_path.name}): {_val_err}")
             return ("success", data, pdf_path.name)
         except Exception as e:
             return ("error", str(e), pdf_path.name)
@@ -1356,10 +1404,10 @@ async def create_user(request: Request):
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
     
     from database import get_connection
-    import hashlib
-    
+    from password_utils import hash_password
+
     data = await request.json()
-    password_hash = hashlib.sha256(data["password"].encode()).hexdigest()
+    password_hash = hash_password(data["password"])
     
     conn = get_connection()
     cursor = conn.cursor()
@@ -1608,7 +1656,20 @@ import secrets
 
 from email_scheduler import email_scheduler
 # Add session middleware (muss nach app = FastAPI() kommen)
-app.add_middleware(SessionMiddleware, secret_key='sbs-invoice-app-secret-key-2025', domain='.sbsdeutschland.com')
+# Session-Secret aus Umgebungsvariable (Fallback nur für Bestands-Kompatibilität).
+_SESSION_SECRET = os.getenv("SESSION_SECRET_KEY") or 'sbs-invoice-app-secret-key-2025'
+if _SESSION_SECRET == 'sbs-invoice-app-secret-key-2025':
+    logger.warning(
+        "SESSION_SECRET_KEY nicht gesetzt – verwende unsicheren Default. "
+        "Bitte in /etc/default/invoice-app setzen."
+    )
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_SESSION_SECRET,
+    domain='.sbsdeutschland.com',
+    https_only=True,
+    same_site='lax',
+)
 
 # -------------------------------------------------
 # Login-Helper & globale Login-Pflicht
@@ -1936,6 +1997,8 @@ async def demo_job(request: Request):
 async def login_page(request: Request):
     next_url = request.query_params.get("next", "/dashboard")
     """Login page"""
+    from csrf import get_csrf_token
+    get_csrf_token(request)  # CSRF-Token in Session sicherstellen
     return templates.TemplateResponse("login.html", {
         "request": request,
         "error": None,
@@ -1943,7 +2006,7 @@ async def login_page(request: Request):
     })
 
 @app.post("/login")
-async def login_submit(request: Request):
+async def login_submit(request: Request, _csrf: None = Depends(require_csrf)):
     """Verarbeitet das Login-Formular.
 
     - prüft Credentials
@@ -1997,6 +2060,7 @@ async def login_submit(request: Request):
     try:
         request.session["user_id"] = user["id"]
         request.session["user_name"] = user.get("name") or email.split("@")[0]
+        request.session["tenant_id"] = user.get("tenant_id") or "default-tenant"
         logger.info(f"LOGIN_DEBUG: Session gesetzt user_id={user['id']}")
     except Exception as exc:
         logger.error(f"LOGIN_DEBUG: Fehler beim Setzen der Session: {exc}")
@@ -2046,6 +2110,8 @@ async def login_submit(request: Request):
 async def register_page(request: Request):
     next_url = request.query_params.get("next", "/dashboard")
     """Register page"""
+    from csrf import get_csrf_token
+    get_csrf_token(request)  # CSRF-Token in Session sicherstellen
     return templates.TemplateResponse("register.html", {
         "request": request,
         "error": None,
@@ -2053,7 +2119,7 @@ async def register_page(request: Request):
     })
 
 @app.post("/register")
-async def register_submit(request: Request):
+async def register_submit(request: Request, _csrf: None = Depends(require_csrf)):
     """Handle registration"""
     from database import create_user, email_exists
     
@@ -3879,6 +3945,9 @@ def send_password_reset_email(to_email: str, token: str):
 @app.get("/password-reset/request", response_class=HTMLResponse)
 async def password_reset_request_page(request: Request):
     """Zeigt Formular zum Anfordern eines Reset-Links."""
+    from csrf import get_csrf_token
+    get_csrf_token(request)  # CSRF-Token in Session sicherstellen
+    next_url = request.query_params.get("next", "/login")
     return templates.TemplateResponse(
         "password_reset_request.html",
         {"request": request, "error": None,
@@ -3887,8 +3956,9 @@ async def password_reset_request_page(request: Request):
 
 
 @app.post("/password-reset/request", response_class=HTMLResponse)
-async def password_reset_request_submit(request: Request, email: str = Form(...)):
+async def password_reset_request_submit(request: Request, email: str = Form(...), _csrf: None = Depends(require_csrf)):
     """Verarbeitet Formular: erstellt Token, sendet E-Mail."""
+    next_url = request.query_params.get("next", "/login")
     logger.info("🔐 Password reset requested for: %s", email)
     token = create_password_reset_token(email)
     logger.info("🔑 Token created (not None): %s", token is not None)
@@ -3923,6 +3993,8 @@ async def password_reset_request_submit(request: Request, email: str = Form(...)
 @app.get("/password-reset/confirm", response_class=HTMLResponse)
 async def password_reset_confirm_page(request: Request):
     """Formular zum Setzen eines neuen Passworts (über ?token=...)."""
+    from csrf import get_csrf_token
+    get_csrf_token(request)  # CSRF-Token in Session sicherstellen
     token = request.query_params.get("token") or ""
     logger.info("🔐 [RESET-CONFIRM-GET] called with token=%s", token)
 
@@ -3958,6 +4030,7 @@ async def password_reset_confirm_submit(
     confirm_password: str | None = Form(None),
     password: str | None = Form(None),
     password_confirm: str | None = Form(None),
+    _csrf: None = Depends(require_csrf),
 ):
     """Verarbeitet das Formular: setzt neues Passwort, wenn Token gültig."""
     logger.info("🔐 [RESET-CONFIRM-POST] called with token=%s", token)
@@ -5762,6 +5835,45 @@ async def datev_export_page(request: Request):
     })
 
 
+@app.post("/api/datev/preview", tags=["DATEV"])
+async def datev_preview(request: Request):
+    """DATEV-Buchungsvorschau + Validierung vor dem Download (Phase 3b).
+
+    Liefert die zu erzeugenden Buchungszeilen, Summen und blockierende
+    Fehler je Rechnung, OHNE eine Datei zu schreiben.
+    """
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    data = await request.json()
+    invoice_ids = data.get("invoice_ids", [])
+    kontenrahmen = data.get("kontenrahmen", "SKR03")
+    if not invoice_ids:
+        return JSONResponse({"error": "Keine Rechnungen ausgewählt"}, status_code=400)
+
+    conn = sqlite3.connect("invoices.db", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    placeholders = ",".join(["?" for _ in invoice_ids])
+    # Gleicher Eigentümer-Filter wie beim Export (keine Fremd-Rechnungen)
+    cursor.execute(f"""
+        SELECT i.* FROM invoices i
+        JOIN jobs j ON i.job_id = j.job_id
+        WHERE i.id IN ({placeholders}) AND j.user_id = ?
+    """, [*invoice_ids, user_id])
+    invoices = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    if not invoices:
+        return JSONResponse({"error": "Keine Rechnungen gefunden"}, status_code=404)
+
+    from datev_validation import build_datev_preview
+    kr = Kontenrahmen.SKR03 if kontenrahmen == "SKR03" else Kontenrahmen.SKR04
+    preview = build_datev_preview(invoices, kontenrahmen=kr)
+    return JSONResponse(preview)
+
+
 @app.post("/api/datev/export", tags=["DATEV"])
 async def export_to_datev(request: Request):
     """Exportiert ausgewählte Rechnungen nach DATEV"""
@@ -5792,10 +5904,14 @@ async def export_to_datev(request: Request):
     cursor = conn.cursor()
     
     placeholders = ','.join(['?' for _ in invoice_ids])
+    # Eigentümer-Filter (Mandanten-/Nutzer-Isolation): nur Rechnungen aus
+    # eigenen Jobs exportieren – verhindert Cross-User/Cross-Tenant-Leak.
     cursor.execute(f"""
-        SELECT * FROM invoices WHERE id IN ({placeholders})
-    """, invoice_ids)
-    
+        SELECT i.* FROM invoices i
+        JOIN jobs j ON i.job_id = j.job_id
+        WHERE i.id IN ({placeholders}) AND j.user_id = ?
+    """, [*invoice_ids, user_id])
+
     invoices = [dict(row) for row in cursor.fetchall()]
     conn.close()
     

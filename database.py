@@ -959,7 +959,19 @@ def init_users_table():
     columns = [col[1] for col in cursor.fetchall()]
     if 'user_id' not in columns:
         cursor.execute('ALTER TABLE jobs ADD COLUMN user_id INTEGER')
-    
+
+    # Mandantentrennung (Phase 1c): tenant_id idempotent ergänzen.
+    for table in ("users", "invoices"):
+        try:
+            cursor.execute(f"PRAGMA table_info({table})")
+            cols = [col[1] for col in cursor.fetchall()]
+            if cols and 'tenant_id' not in cols:
+                cursor.execute(
+                    f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT DEFAULT 'default-tenant'"
+                )
+        except Exception:
+            pass
+
     conn.commit()
     # Cache invalidieren nach neuen Invoices
     invalidate_cache("statistics")
@@ -968,19 +980,20 @@ def init_users_table():
 
 init_users_table()
 
-def create_user(email: str, password: str, name: str = '', company: str = '') -> int:
+def create_user(email: str, password: str, name: str = '', company: str = '',
+                tenant_id: str = 'default-tenant') -> int:
     """Create new user, returns user_id"""
-    import hashlib
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+    from password_utils import hash_password
+
+    password_hash = hash_password(password)
+
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     cursor.execute('''
-        INSERT INTO users (email, password_hash, name, company)
-        VALUES (?, ?, ?, ?)
-    ''', (email, password_hash, name, company))
+        INSERT INTO users (email, password_hash, name, company, tenant_id)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (email, password_hash, name, company, tenant_id))
     
     user_id = cursor.lastrowid
     conn.commit()
@@ -993,30 +1006,40 @@ def create_user(email: str, password: str, name: str = '', company: str = '') ->
 
 def verify_user(email: str, password: str) -> dict:
     """Verify user credentials, returns user dict or None"""
-    import hashlib
     from datetime import datetime
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+    from password_utils import verify_password, needs_rehash, hash_password
+
     conn = get_connection()
     cursor = conn.cursor()
-    
+
+    # Hash NICHT mehr in der SQL-WHERE-Klausel vergleichen – stattdessen den
+    # gespeicherten Hash laden und mit verify_password() prüfen. Das erlaubt
+    # bcrypt/PBKDF2 (gesalzen) und unterstützt Legacy-SHA-256 weiterhin.
     cursor.execute('''
-        SELECT id, email, name, company, is_active 
-        FROM users 
-        WHERE email = ? AND password_hash = ?
-    ''', (email, password_hash))
-    
+        SELECT id, email, name, company, is_active, password_hash, tenant_id
+        FROM users
+        WHERE email = ?
+    ''', (email,))
+
     row = cursor.fetchone()
-    
-    if row and row[4]:  # is_active
+
+    if row and row[4] and verify_password(password, row[5]):  # is_active + Passwort korrekt
+        # Transparentes Upgrade veralteter Hashes auf das starke Verfahren
+        if needs_rehash(row[5]):
+            try:
+                cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?',
+                              (hash_password(password), row[0]))
+            except Exception:
+                pass
         # Update last login
-        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?', 
+        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?',
                       (datetime.now().isoformat(), row[0]))
         conn.commit()
         conn.close()
-        return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3]}
-    
+        tenant_id = row[6] if len(row) > 6 and row[6] else 'default-tenant'
+        return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3],
+                'tenant_id': tenant_id}
+
     conn.close()
     return None
 
@@ -1073,7 +1096,19 @@ def init_users_table():
     columns = [col[1] for col in cursor.fetchall()]
     if 'user_id' not in columns:
         cursor.execute('ALTER TABLE jobs ADD COLUMN user_id INTEGER')
-    
+
+    # Mandantentrennung (Phase 1c): tenant_id idempotent ergänzen.
+    for table in ("users", "invoices"):
+        try:
+            cursor.execute(f"PRAGMA table_info({table})")
+            cols = [col[1] for col in cursor.fetchall()]
+            if cols and 'tenant_id' not in cols:
+                cursor.execute(
+                    f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT DEFAULT 'default-tenant'"
+                )
+        except Exception:
+            pass
+
     conn.commit()
     # Cache invalidieren nach neuen Invoices
     invalidate_cache("statistics")
@@ -1082,19 +1117,20 @@ def init_users_table():
 
 init_users_table()
 
-def create_user(email: str, password: str, name: str = '', company: str = '') -> int:
+def create_user(email: str, password: str, name: str = '', company: str = '',
+                tenant_id: str = 'default-tenant') -> int:
     """Create new user, returns user_id"""
-    import hashlib
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+    from password_utils import hash_password
+
+    password_hash = hash_password(password)
+
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     cursor.execute('''
-        INSERT INTO users (email, password_hash, name, company)
-        VALUES (?, ?, ?, ?)
-    ''', (email, password_hash, name, company))
+        INSERT INTO users (email, password_hash, name, company, tenant_id)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (email, password_hash, name, company, tenant_id))
     
     user_id = cursor.lastrowid
     conn.commit()
@@ -1107,30 +1143,40 @@ def create_user(email: str, password: str, name: str = '', company: str = '') ->
 
 def verify_user(email: str, password: str) -> dict:
     """Verify user credentials, returns user dict or None"""
-    import hashlib
     from datetime import datetime
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
+    from password_utils import verify_password, needs_rehash, hash_password
+
     conn = get_connection()
     cursor = conn.cursor()
-    
+
+    # Hash NICHT mehr in der SQL-WHERE-Klausel vergleichen – stattdessen den
+    # gespeicherten Hash laden und mit verify_password() prüfen. Das erlaubt
+    # bcrypt/PBKDF2 (gesalzen) und unterstützt Legacy-SHA-256 weiterhin.
     cursor.execute('''
-        SELECT id, email, name, company, is_active 
-        FROM users 
-        WHERE email = ? AND password_hash = ?
-    ''', (email, password_hash))
-    
+        SELECT id, email, name, company, is_active, password_hash, tenant_id
+        FROM users
+        WHERE email = ?
+    ''', (email,))
+
     row = cursor.fetchone()
-    
-    if row and row[4]:  # is_active
+
+    if row and row[4] and verify_password(password, row[5]):  # is_active + Passwort korrekt
+        # Transparentes Upgrade veralteter Hashes auf das starke Verfahren
+        if needs_rehash(row[5]):
+            try:
+                cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?',
+                              (hash_password(password), row[0]))
+            except Exception:
+                pass
         # Update last login
-        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?', 
+        cursor.execute('UPDATE users SET last_login = ? WHERE id = ?',
                       (datetime.now().isoformat(), row[0]))
         conn.commit()
         conn.close()
-        return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3]}
-    
+        tenant_id = row[6] if len(row) > 6 and row[6] else 'default-tenant'
+        return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3],
+                'tenant_id': tenant_id}
+
     conn.close()
     return None
 
@@ -1698,24 +1744,24 @@ def verify_reset_token(token: str) -> Optional[int]:
 
 def reset_password(token: str, new_password: str) -> bool:
     """Reset user password with token"""
-    import bcrypt
-    
+    from password_utils import hash_password
+
     user_id = verify_reset_token(token)
     if not user_id:
         return False
-    
+
     conn = get_connection()
     cursor = conn.cursor()
-    
-    # Hash new password
-    password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
-    
+
+    # Hash new password (bcrypt bzw. PBKDF2 – zentral via password_utils)
+    password_hash = hash_password(new_password)
+
     # Update password
     cursor.execute('''
-        UPDATE users 
+        UPDATE users
         SET password_hash = ?
         WHERE id = ?
-    ''', (password_hash.decode('utf-8'), user_id))
+    ''', (password_hash, user_id))
     
     # Mark token as used
     cursor.execute('''
@@ -1859,8 +1905,8 @@ def verify_reset_token(token: str) -> Optional[int]:
 
 
 def reset_password(token: str, new_password: str) -> bool:
-    """Reset user password with token, using sha256 hashing (wie create_user)."""
-    import hashlib
+    """Reset user password with token, using zentrales sicheres Hashing."""
+    from password_utils import hash_password
 
     user_id = verify_reset_token(token)
     if not user_id:
@@ -1869,7 +1915,7 @@ def reset_password(token: str, new_password: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
 
-    password_hash = hashlib.sha256(new_password.encode("utf-8")).hexdigest()
+    password_hash = hash_password(new_password)
     cursor.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",
         (password_hash, user_id),
