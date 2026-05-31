@@ -5835,6 +5835,45 @@ async def datev_export_page(request: Request):
     })
 
 
+@app.post("/api/datev/preview", tags=["DATEV"])
+async def datev_preview(request: Request):
+    """DATEV-Buchungsvorschau + Validierung vor dem Download (Phase 3b).
+
+    Liefert die zu erzeugenden Buchungszeilen, Summen und blockierende
+    Fehler je Rechnung, OHNE eine Datei zu schreiben.
+    """
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    data = await request.json()
+    invoice_ids = data.get("invoice_ids", [])
+    kontenrahmen = data.get("kontenrahmen", "SKR03")
+    if not invoice_ids:
+        return JSONResponse({"error": "Keine Rechnungen ausgewählt"}, status_code=400)
+
+    conn = sqlite3.connect("invoices.db", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    placeholders = ",".join(["?" for _ in invoice_ids])
+    # Gleicher Eigentümer-Filter wie beim Export (keine Fremd-Rechnungen)
+    cursor.execute(f"""
+        SELECT i.* FROM invoices i
+        JOIN jobs j ON i.job_id = j.job_id
+        WHERE i.id IN ({placeholders}) AND j.user_id = ?
+    """, [*invoice_ids, user_id])
+    invoices = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    if not invoices:
+        return JSONResponse({"error": "Keine Rechnungen gefunden"}, status_code=404)
+
+    from datev_validation import build_datev_preview
+    kr = Kontenrahmen.SKR03 if kontenrahmen == "SKR03" else Kontenrahmen.SKR04
+    preview = build_datev_preview(invoices, kontenrahmen=kr)
+    return JSONResponse(preview)
+
+
 @app.post("/api/datev/export", tags=["DATEV"])
 async def export_to_datev(request: Request):
     """Exportiert ausgewählte Rechnungen nach DATEV"""
@@ -5865,10 +5904,14 @@ async def export_to_datev(request: Request):
     cursor = conn.cursor()
     
     placeholders = ','.join(['?' for _ in invoice_ids])
+    # Eigentümer-Filter (Mandanten-/Nutzer-Isolation): nur Rechnungen aus
+    # eigenen Jobs exportieren – verhindert Cross-User/Cross-Tenant-Leak.
     cursor.execute(f"""
-        SELECT * FROM invoices WHERE id IN ({placeholders})
-    """, invoice_ids)
-    
+        SELECT i.* FROM invoices i
+        JOIN jobs j ON i.job_id = j.job_id
+        WHERE i.id IN ({placeholders}) AND j.user_id = ?
+    """, [*invoice_ids, user_id])
+
     invoices = [dict(row) for row in cursor.fetchall()]
     conn.close()
     
