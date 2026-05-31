@@ -80,11 +80,27 @@ Der Legacy-Monolith (`web/app.py` + `database.py`) nutzt weiterhin SQLite.
 Ein vollständiger Cutover umfasst:
 
 1. Schema in Postgres anlegen (`alembic upgrade head`).
-2. Bestandsdaten aus `invoices.db` exportieren und tenant-bezogen
-   importieren (separates, reviewtes Skript – noch zu erstellen).
+2. Bestandsdaten migrieren mit `scripts/migrate_sqlite_to_postgres.py`:
+
+   ```bash
+   # 1) Vorschau (Dry-Run, schreibt nichts, keine PG-Verbindung)
+   python scripts/migrate_sqlite_to_postgres.py \
+       --sqlite /var/www/invoice-app/invoices.db --tenant <TENANT>
+
+   # 2) Tatsächliche Migration nach Neon
+   export DATABASE_URL="postgresql+psycopg://...sslmode=require"
+   python scripts/migrate_sqlite_to_postgres.py --tenant <TENANT> --commit
+   ```
+
+   Das Skript legt je Legacy-Rechnung einen Metadatensatz in `invoices`
+   an (`status='migrated'`) und sichert die vollständigen Fachfelder
+   verlustfrei als JSONB in `invoice_events` (event_type `legacy_import`).
+   Es ist **idempotent** (bereits migrierte `document_id` werden
+   übersprungen) und **Dry-Run per Default**.
+
 3. `database.py`-Zugriffe schrittweise auf die SQLAlchemy-Session
    (`shared/db/session.py`) umstellen.
 4. Service neu starten und Smoke-Tests fahren.
 
-Dieser Schritt wird bewusst **nicht** automatisiert ausgeführt, um
+Der `--commit`-Schritt wird bewusst **nicht** automatisiert ausgeführt, um
 Datenverlust auf der Produktiv-DB auszuschließen.
