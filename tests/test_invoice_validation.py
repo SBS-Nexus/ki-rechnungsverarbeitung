@@ -124,3 +124,46 @@ def test_validate_invoice_flags_bad_iban_and_vat():
     assert befund["iban_gueltig"] is False
     assert befund["ust_id_gueltig"] is False
     assert len(befund["hinweise"]) >= 2
+
+
+# --- EN 16931 ------------------------------------------------------------
+def _geparste_erechnung() -> dict:
+    return {
+        "profile": "XRechnung",
+        "rechnungsnummer": "RE-2026-77",
+        "datum": "2026-05-30",
+        "waehrung": "EUR",
+        "rechnungsaussteller": "Muster GmbH",
+        "aussteller_adresse": "Musterstr. 1, 10115 Berlin, DE",
+        "rechnungsempfaenger": "Kunde AG",
+        "ust_id": "DE136695976",
+        "betrag_netto": 100.0,
+        "mwst_betrag": 19.0,
+        "betrag_brutto": 119.0,
+        "iban": "DE89370400440532013000",
+        "positionen": [{"bezeichnung": "Leistung", "menge": 1}],
+    }
+
+
+def test_en16931_konform():
+    befund = iv.check_en16931_conformance(_geparste_erechnung())
+    assert befund["en16931_konform"] is True
+    assert befund["fehlende_business_terms"] == []
+    assert befund["format"] == "XRechnung"
+
+
+def test_en16931_fehlende_bt_und_positionen():
+    inv = _geparste_erechnung()
+    del inv["rechnungsnummer"]
+    del inv["positionen"]
+    befund = iv.check_en16931_conformance(inv)
+    assert befund["en16931_konform"] is False
+    bts = {f["bt"] for f in befund["fehlende_business_terms"]}
+    assert "BT-1" in bts and "BG-25" in bts
+
+
+def test_en16931_betragslogik_hinweis():
+    inv = _geparste_erechnung()
+    inv["betrag_brutto"] = 200.0  # passt nicht zu netto+ust
+    befund = iv.check_en16931_conformance(inv)
+    assert any("Betragslogik" in h for h in befund["hinweise"])

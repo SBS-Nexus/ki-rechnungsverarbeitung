@@ -215,3 +215,75 @@ def validate_invoice(invoice: Mapping[str, Any]) -> dict[str, Any]:
         and befund.get("ust_id_gueltig", True)
     )
     return befund
+
+
+# --- E-Rechnung: EN 16931 Konformität ------------------------------------
+# Kern-Pflichtangaben (Business Terms) nach EN 16931, gemappt auf die
+# Felder des E-Rechnungs-Parsers (einvoice_import.py).
+_EN16931_PFLICHT: list[tuple[str, str, tuple[str, ...]]] = [
+    ("BT-1", "Rechnungsnummer", ("rechnungsnummer", "rechnungs_nummer")),
+    ("BT-2", "Rechnungsdatum", ("datum", "rechnungs_datum", "rechnungsdatum")),
+    ("BT-5", "Währung", ("waehrung", "währung", "currency")),
+    ("BT-27", "Name des Verkäufers", ("rechnungsaussteller", "lieferant", "aussteller")),
+    ("BT-44", "Name des Erwerbers", ("rechnungsempfaenger", "empfaenger", "leistungsempfaenger")),
+    ("BT-31/32", "USt-IdNr oder Steuernummer des Verkäufers", ("ust_id", "steuernummer", "ustid")),
+    ("BT-109", "Gesamtbetrag netto", ("betrag_netto", "netto_betrag", "netto")),
+    ("BT-110", "Umsatzsteuerbetrag", ("mwst_betrag", "steuer_betrag", "ust_betrag")),
+    ("BT-112", "Gesamtbetrag brutto", ("betrag_brutto", "brutto_betrag", "brutto")),
+]
+
+
+def check_en16931_conformance(invoice: Mapping[str, Any]) -> dict[str, Any]:
+    """Prüft eine geparste E-Rechnung auf die EN-16931-Kern-Pflichtangaben.
+
+    Erwartet das Ausgabeformat von einvoice_import.parse_einvoice.
+    Liefert einen JSON-fähigen Befund inkl. Liste fehlender Business Terms.
+    """
+    fehlend: list[dict[str, str]] = []
+    for bt, label, keys in _EN16931_PFLICHT:
+        if _first(invoice, *keys) is None:
+            fehlend.append({"bt": bt, "feld": label})
+
+    hinweise: list[str] = []
+
+    # Mindestens eine Rechnungsposition (BG-25)
+    positionen = invoice.get("positionen")
+    if not positionen:
+        fehlend.append({"bt": "BG-25", "feld": "mindestens eine Rechnungsposition"})
+
+    # Verkäufer-Anschrift (BG-5)
+    if _first(invoice, "aussteller_adresse", "aussteller_anschrift") is None:
+        hinweise.append("BG-5: Verkäufer-Anschrift nicht erkannt")
+
+    # Rechnerische Konsistenz: netto + USt ≈ brutto (Toleranz 1 Cent)
+    netto = _first(invoice, "betrag_netto", "netto_betrag")
+    ust = _first(invoice, "mwst_betrag", "steuer_betrag")
+    brutto = _first(invoice, "betrag_brutto", "brutto_betrag")
+    try:
+        if None not in (netto, ust, brutto):
+            if abs((float(netto) + float(ust)) - float(brutto)) > 0.01:
+                hinweise.append(
+                    f"Betragslogik: netto ({netto}) + USt ({ust}) ≠ brutto ({brutto})"
+                )
+    except (TypeError, ValueError):
+        pass
+
+    # IBAN/USt-IdNr (sofern vorhanden) zusätzlich prüfen
+    iban = _first(invoice, "iban")
+    if iban is not None:
+        ok, msg = validate_iban(str(iban))
+        if not ok:
+            hinweise.append(f"IBAN: {msg}")
+    vat = _first(invoice, "ust_id", "ustid", "vat_id")
+    if vat is not None:
+        ok, msg = validate_vat_id(str(vat))
+        if not ok:
+            hinweise.append(f"USt-IdNr: {msg}")
+
+    profile = invoice.get("profile")
+    return {
+        "format": profile or "unbekannt",
+        "en16931_konform": not fehlend,
+        "fehlende_business_terms": fehlend,
+        "hinweise": hinweise,
+    }

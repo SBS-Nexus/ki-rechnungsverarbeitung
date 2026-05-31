@@ -437,6 +437,12 @@ async def process_invoices_background(job_id: str):
                 data = einv_data
                 data['extraction_method'] = 'einvoice'
                 data['ki_score'] = 99  # Strukturierte Daten = höchste Confidence
+                # Phase 2b: EN-16931-Konformitätsbefund anhängen
+                try:
+                    from invoice_validation import check_en16931_conformance
+                    data['en16931'] = check_en16931_conformance(data)
+                except Exception as _en_err:
+                    app_logger.warning(f"EN16931-Prüfung übersprungen ({pdf_path.name}): {_en_err}")
             else:
                 # Keine E-Rechnung - nutze KI-Extraktion
                 data = processor.process_invoice(pdf_path)
