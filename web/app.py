@@ -42,7 +42,8 @@ from web.routes_oauth import router as oauth_router
 from invoice_api import router as invoice_router  # NEU
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, BackgroundTasks, Depends
+from csrf import require_csrf
 # Nexus Gateway Integration
 import sys
 sys.path.insert(0, "/var/www/invoice-app")
@@ -1996,6 +1997,8 @@ async def demo_job(request: Request):
 async def login_page(request: Request):
     next_url = request.query_params.get("next", "/dashboard")
     """Login page"""
+    from csrf import get_csrf_token
+    get_csrf_token(request)  # CSRF-Token in Session sicherstellen
     return templates.TemplateResponse("login.html", {
         "request": request,
         "error": None,
@@ -2003,7 +2006,7 @@ async def login_page(request: Request):
     })
 
 @app.post("/login")
-async def login_submit(request: Request):
+async def login_submit(request: Request, _csrf: None = Depends(require_csrf)):
     """Verarbeitet das Login-Formular.
 
     - prüft Credentials
@@ -2057,6 +2060,7 @@ async def login_submit(request: Request):
     try:
         request.session["user_id"] = user["id"]
         request.session["user_name"] = user.get("name") or email.split("@")[0]
+        request.session["tenant_id"] = user.get("tenant_id") or "default-tenant"
         logger.info(f"LOGIN_DEBUG: Session gesetzt user_id={user['id']}")
     except Exception as exc:
         logger.error(f"LOGIN_DEBUG: Fehler beim Setzen der Session: {exc}")
@@ -2106,6 +2110,8 @@ async def login_submit(request: Request):
 async def register_page(request: Request):
     next_url = request.query_params.get("next", "/dashboard")
     """Register page"""
+    from csrf import get_csrf_token
+    get_csrf_token(request)  # CSRF-Token in Session sicherstellen
     return templates.TemplateResponse("register.html", {
         "request": request,
         "error": None,
@@ -2113,7 +2119,7 @@ async def register_page(request: Request):
     })
 
 @app.post("/register")
-async def register_submit(request: Request):
+async def register_submit(request: Request, _csrf: None = Depends(require_csrf)):
     """Handle registration"""
     from database import create_user, email_exists
     
@@ -3939,6 +3945,9 @@ def send_password_reset_email(to_email: str, token: str):
 @app.get("/password-reset/request", response_class=HTMLResponse)
 async def password_reset_request_page(request: Request):
     """Zeigt Formular zum Anfordern eines Reset-Links."""
+    from csrf import get_csrf_token
+    get_csrf_token(request)  # CSRF-Token in Session sicherstellen
+    next_url = request.query_params.get("next", "/login")
     return templates.TemplateResponse(
         "password_reset_request.html",
         {"request": request, "error": None,
@@ -3947,8 +3956,9 @@ async def password_reset_request_page(request: Request):
 
 
 @app.post("/password-reset/request", response_class=HTMLResponse)
-async def password_reset_request_submit(request: Request, email: str = Form(...)):
+async def password_reset_request_submit(request: Request, email: str = Form(...), _csrf: None = Depends(require_csrf)):
     """Verarbeitet Formular: erstellt Token, sendet E-Mail."""
+    next_url = request.query_params.get("next", "/login")
     logger.info("🔐 Password reset requested for: %s", email)
     token = create_password_reset_token(email)
     logger.info("🔑 Token created (not None): %s", token is not None)
@@ -3983,6 +3993,8 @@ async def password_reset_request_submit(request: Request, email: str = Form(...)
 @app.get("/password-reset/confirm", response_class=HTMLResponse)
 async def password_reset_confirm_page(request: Request):
     """Formular zum Setzen eines neuen Passworts (über ?token=...)."""
+    from csrf import get_csrf_token
+    get_csrf_token(request)  # CSRF-Token in Session sicherstellen
     token = request.query_params.get("token") or ""
     logger.info("🔐 [RESET-CONFIRM-GET] called with token=%s", token)
 
@@ -4018,6 +4030,7 @@ async def password_reset_confirm_submit(
     confirm_password: str | None = Form(None),
     password: str | None = Form(None),
     password_confirm: str | None = Form(None),
+    _csrf: None = Depends(require_csrf),
 ):
     """Verarbeitet das Formular: setzt neues Passwort, wenn Token gültig."""
     logger.info("🔐 [RESET-CONFIRM-POST] called with token=%s", token)

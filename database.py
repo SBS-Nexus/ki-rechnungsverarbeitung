@@ -959,7 +959,19 @@ def init_users_table():
     columns = [col[1] for col in cursor.fetchall()]
     if 'user_id' not in columns:
         cursor.execute('ALTER TABLE jobs ADD COLUMN user_id INTEGER')
-    
+
+    # Mandantentrennung (Phase 1c): tenant_id idempotent ergänzen.
+    for table in ("users", "invoices"):
+        try:
+            cursor.execute(f"PRAGMA table_info({table})")
+            cols = [col[1] for col in cursor.fetchall()]
+            if cols and 'tenant_id' not in cols:
+                cursor.execute(
+                    f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT DEFAULT 'default-tenant'"
+                )
+        except Exception:
+            pass
+
     conn.commit()
     # Cache invalidieren nach neuen Invoices
     invalidate_cache("statistics")
@@ -968,7 +980,8 @@ def init_users_table():
 
 init_users_table()
 
-def create_user(email: str, password: str, name: str = '', company: str = '') -> int:
+def create_user(email: str, password: str, name: str = '', company: str = '',
+                tenant_id: str = 'default-tenant') -> int:
     """Create new user, returns user_id"""
     from password_utils import hash_password
 
@@ -976,11 +989,11 @@ def create_user(email: str, password: str, name: str = '', company: str = '') ->
 
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     cursor.execute('''
-        INSERT INTO users (email, password_hash, name, company)
-        VALUES (?, ?, ?, ?)
-    ''', (email, password_hash, name, company))
+        INSERT INTO users (email, password_hash, name, company, tenant_id)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (email, password_hash, name, company, tenant_id))
     
     user_id = cursor.lastrowid
     conn.commit()
@@ -1003,7 +1016,7 @@ def verify_user(email: str, password: str) -> dict:
     # gespeicherten Hash laden und mit verify_password() prüfen. Das erlaubt
     # bcrypt/PBKDF2 (gesalzen) und unterstützt Legacy-SHA-256 weiterhin.
     cursor.execute('''
-        SELECT id, email, name, company, is_active, password_hash
+        SELECT id, email, name, company, is_active, password_hash, tenant_id
         FROM users
         WHERE email = ?
     ''', (email,))
@@ -1023,7 +1036,9 @@ def verify_user(email: str, password: str) -> dict:
                       (datetime.now().isoformat(), row[0]))
         conn.commit()
         conn.close()
-        return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3]}
+        tenant_id = row[6] if len(row) > 6 and row[6] else 'default-tenant'
+        return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3],
+                'tenant_id': tenant_id}
 
     conn.close()
     return None
@@ -1081,7 +1096,19 @@ def init_users_table():
     columns = [col[1] for col in cursor.fetchall()]
     if 'user_id' not in columns:
         cursor.execute('ALTER TABLE jobs ADD COLUMN user_id INTEGER')
-    
+
+    # Mandantentrennung (Phase 1c): tenant_id idempotent ergänzen.
+    for table in ("users", "invoices"):
+        try:
+            cursor.execute(f"PRAGMA table_info({table})")
+            cols = [col[1] for col in cursor.fetchall()]
+            if cols and 'tenant_id' not in cols:
+                cursor.execute(
+                    f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT DEFAULT 'default-tenant'"
+                )
+        except Exception:
+            pass
+
     conn.commit()
     # Cache invalidieren nach neuen Invoices
     invalidate_cache("statistics")
@@ -1090,7 +1117,8 @@ def init_users_table():
 
 init_users_table()
 
-def create_user(email: str, password: str, name: str = '', company: str = '') -> int:
+def create_user(email: str, password: str, name: str = '', company: str = '',
+                tenant_id: str = 'default-tenant') -> int:
     """Create new user, returns user_id"""
     from password_utils import hash_password
 
@@ -1098,11 +1126,11 @@ def create_user(email: str, password: str, name: str = '', company: str = '') ->
 
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     cursor.execute('''
-        INSERT INTO users (email, password_hash, name, company)
-        VALUES (?, ?, ?, ?)
-    ''', (email, password_hash, name, company))
+        INSERT INTO users (email, password_hash, name, company, tenant_id)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (email, password_hash, name, company, tenant_id))
     
     user_id = cursor.lastrowid
     conn.commit()
@@ -1125,7 +1153,7 @@ def verify_user(email: str, password: str) -> dict:
     # gespeicherten Hash laden und mit verify_password() prüfen. Das erlaubt
     # bcrypt/PBKDF2 (gesalzen) und unterstützt Legacy-SHA-256 weiterhin.
     cursor.execute('''
-        SELECT id, email, name, company, is_active, password_hash
+        SELECT id, email, name, company, is_active, password_hash, tenant_id
         FROM users
         WHERE email = ?
     ''', (email,))
@@ -1145,7 +1173,9 @@ def verify_user(email: str, password: str) -> dict:
                       (datetime.now().isoformat(), row[0]))
         conn.commit()
         conn.close()
-        return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3]}
+        tenant_id = row[6] if len(row) > 6 and row[6] else 'default-tenant'
+        return {'id': row[0], 'email': row[1], 'name': row[2], 'company': row[3],
+                'tenant_id': tenant_id}
 
     conn.close()
     return None
