@@ -14,6 +14,7 @@ Usage:
 """
 
 import requests
+from resend_config import resend_headers
 import json
 import time
 import sys
@@ -24,7 +25,6 @@ from datetime import datetime
 # ============================================================
 # KONFIGURATION
 # ============================================================
-RESEND_API_KEY = "re_BG21cv8V_2JKgr3eGdWFQb3LPU6Koyzmi"
 FROM_EMAIL = "luis@sbsdeutschland.de"
 FROM_NAME = "Luis Schenk | SBS Deutschland"
 REPLY_TO = "ki@sbsdeutschland.de"
@@ -172,7 +172,6 @@ EMAILS = [
 # API + SEND LOGIC
 # ============================================================
 
-HEADERS = {"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"}
 
 def send_email(e, test_mode=False):
     to = TEST_EMAIL if test_mode else e["to"]
@@ -189,7 +188,7 @@ def send_email(e, test_mode=False):
         ]
     }
     try:
-        r = requests.post("https://api.resend.com/emails", headers=HEADERS, json=payload, timeout=15)
+        r = requests.post("https://api.resend.com/emails", headers=resend_headers(), json=payload, timeout=15)
         if r.status_code in [200, 201]:
             return {"ok": True, "id": r.json().get("id", "?")}
         return {"ok": False, "error": f"HTTP {r.status_code}: {r.text}"}

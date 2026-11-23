@@ -3,6 +3,7 @@ SBS Invoice-App - Nexus Gateway API Integration
 Erstellt automatisch via install_nexus_api.sh
 """
 import os
+from resend_config import resend_headers
 import base64
 import tempfile
 import logging
@@ -687,10 +688,7 @@ async def register(request: RegisterRequest):
             
             requests.post(
                 "https://api.resend.com/emails",
-                headers={
-                    "Authorization": "Bearer re_BG21cv8V_2JKgr3eGdWFQb3LPU6Koyzmi",
-                    "Content-Type": "application/json"
-                },
+                headers=resend_headers(),
                 json={
                     "from": "SBS Nexus <noreply@sbsdeutschland.de>",
                     "to": request.email,
@@ -710,10 +708,7 @@ async def register(request: RegisterRequest):
     try:
         requests.post(
             "https://api.resend.com/emails",
-            headers={
-                "Authorization": "Bearer re_BG21cv8V_2JKgr3eGdWFQb3LPU6Koyzmi",
-                "Content-Type": "application/json"
-            },
+            headers=resend_headers(),
             json={
                 "from": "SBS Nexus <noreply@sbsdeutschland.de>",
                 "to": "luis220195@gmail.com",
@@ -773,10 +768,7 @@ async def forgot_password(request: ForgotPasswordRequest):
         
         response = requests.post(
             "https://api.resend.com/emails",
-            headers={
-                "Authorization": "Bearer re_BG21cv8V_2JKgr3eGdWFQb3LPU6Koyzmi",
-                "Content-Type": "application/json"
-            },
+            headers=resend_headers(),
             json={
                 "from": "SBS Nexus <noreply@sbsdeutschland.de>",
                 "to": request.email,
@@ -1303,10 +1295,7 @@ def send_notification_email(to_email: str, subject: str, message: str):
     try:
         response = requests.post(
             "https://api.resend.com/emails",
-            headers={
-                "Authorization": "Bearer re_123456789",  # Replace with env var
-                "Content-Type": "application/json"
-            },
+            headers=resend_headers(),
             json={
                 "from": "SBS Nexus <noreply@sbsdeutschland.com>",
                 "to": to_email,
