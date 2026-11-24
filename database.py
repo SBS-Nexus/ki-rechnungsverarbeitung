@@ -1025,7 +1025,7 @@ def verify_user(email: str, password: str) -> dict:
 
     if row and row[4] and verify_password(password, row[5]):  # is_active + Passwort korrekt
         # Transparentes Upgrade veralteter Hashes auf das starke Verfahren
-        if needs_rehash(row[5]):
+        if needs_rehash(row[5], password):
             try:
                 cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?',
                               (hash_password(password), row[0]))
@@ -1162,7 +1162,7 @@ def verify_user(email: str, password: str) -> dict:
 
     if row and row[4] and verify_password(password, row[5]):  # is_active + Passwort korrekt
         # Transparentes Upgrade veralteter Hashes auf das starke Verfahren
-        if needs_rehash(row[5]):
+        if needs_rehash(row[5], password):
             try:
                 cursor.execute('UPDATE users SET password_hash = ? WHERE id = ?',
                               (hash_password(password), row[0]))

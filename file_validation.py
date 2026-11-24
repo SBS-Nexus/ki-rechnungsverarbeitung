@@ -17,6 +17,11 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from starlette.datastructures import UploadFile
 
 # Maximale Upload-Größe pro Datei
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
@@ -30,6 +35,19 @@ _SIGNATURES: list[tuple[bytes, str, str]] = [
 ]
 
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
+
+
+async def save_pdf_upload(upload: "UploadFile", directory: Path) -> dict[str, str | int]:
+    """Validate a bounded read and store one uniquely named PDF exclusively."""
+    content = await upload.read(MAX_FILE_SIZE + 1)
+    check = validate_upload(upload.filename or "", content, allowed_exts={".pdf"})
+    if not check.ok:
+        raise ValueError(check.reason)
+    stem = Path(safe_filename(upload.filename or "", ".pdf")).stem[:160]
+    filename = f"{stem}_{uuid.uuid4().hex}{check.detected_ext}"
+    with (directory / filename).open("xb") as output:
+        output.write(content)
+    return {"filename": filename, "size": len(content)}
 
 
 @dataclass

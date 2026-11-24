@@ -33,9 +33,13 @@ def get_csrf_token(request: Request) -> str:
 def validate_csrf_token(request: Request, submitted: str | None) -> bool:
     """Vergleicht das eingereichte Token zeitkonstant mit dem Session-Token."""
     expected = request.session.get(CSRF_SESSION_KEY)
-    if not expected or not submitted:
+    if (
+        not isinstance(expected, str) or not isinstance(submitted, str)
+        or not expected or not submitted
+        or not expected.isascii() or not submitted.isascii()
+    ):
         return False
-    return hmac.compare_digest(str(expected), str(submitted))
+    return hmac.compare_digest(expected, submitted)
 
 
 async def require_csrf(request: Request) -> None:

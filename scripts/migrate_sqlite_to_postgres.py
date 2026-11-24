@@ -32,6 +32,8 @@ Beispiel:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import sqlite3
 import sys
@@ -81,14 +83,24 @@ def map_invoice(row: dict[str, Any], tenant_id: str) -> tuple[dict[str, Any], di
       - event_details: vollständige fachliche Felder (JSONB) fürs InvoiceEvent
     """
     legacy_id = row.get("id")
+    if not isinstance(legacy_id, int) or isinstance(legacy_id, bool):
+        raise ValueError("Legacy invoice id must be an integer")
+    if not isinstance(tenant_id, str) or not tenant_id.strip() or len(tenant_id) > 128:
+        raise ValueError("Tenant id must contain 1–128 characters")
     document_id = f"legacy-{tenant_id}-{legacy_id}"
+    if len(document_id) > 64:
+        identity = json.dumps([tenant_id, legacy_id], ensure_ascii=True).encode("ascii")
+        document_id = "legacy-" + hashlib.sha256(identity).hexdigest()[:57]
     uploaded_at = _parse_dt(row.get("datum")) or datetime.utcnow()
+    filename = row.get("file_name") or row.get("filename")
+    if not isinstance(filename, str) or len(filename) > 512:
+        filename = None
 
     invoice_metadata = {
         "document_id": document_id,
         "tenant_id": tenant_id,
         "document_type": "invoice",
-        "file_name": row.get("artikel") or None,
+        "file_name": filename,
         "mime_type": None,
         "uploaded_by": None,
         "uploaded_at": uploaded_at,

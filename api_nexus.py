@@ -272,6 +272,7 @@ async def get_stats():
 # AUTH ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
 import hashlib
+from password_utils import hash_password, verify_password, needs_rehash
 
 class LoginRequest(BaseModel):
     email: str
@@ -306,14 +307,16 @@ async def login(request: LoginRequest):
     if verified and not verified[0]:
         raise HTTPException(status_code=403, detail="Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse")
     
-    # Password check (SHA256)
-    input_hash = hashlib.sha256(request.password.encode()).hexdigest()
-    if input_hash != password_hash:
+    # Shared verifier preserves web/Nexus compatibility during hash upgrades.
+    if not verify_password(request.password, password_hash):
         raise HTTPException(status_code=401, detail="Ungültige Anmeldedaten")
     
-    # Update last_login
+    # Upgrade only after successful verification.
     conn = sqlite3.connect("/var/www/invoice-app/invoices.db")
     cursor = conn.cursor()
+    if needs_rehash(password_hash, request.password):
+        cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                       (hash_password(request.password), user_id))
     cursor.execute("UPDATE users SET last_login = datetime('now') WHERE id = ?", (user_id,))
     conn.commit()
     conn.close()
@@ -467,7 +470,7 @@ async def create_user(request: CreateUserRequest, authorization: str = Header(No
         raise HTTPException(status_code=403, detail="Keine Admin-Berechtigung")
     
     # Create user
-    password_hash = hashlib.sha256(request.password.encode()).hexdigest()
+    password_hash = hash_password(request.password)
     
     try:
         cursor.execute("""
@@ -543,7 +546,7 @@ async def reset_password(request: ResetPasswordRequest, authorization: str = Hea
     if not result or not result[0]:
         raise HTTPException(status_code=403, detail="Keine Admin-Berechtigung")
     
-    password_hash = hashlib.sha256(request.new_password.encode()).hexdigest()
+    password_hash = hash_password(request.new_password)
     
     # Hole User-Info
     cursor.execute("SELECT email, name FROM users WHERE id = ?", (request.user_id,))
@@ -660,7 +663,7 @@ async def register(request: RegisterRequest):
     is_company = request.email.endswith("@sbsdeutschland.de") or request.email.endswith("@sbsdeutschland.com")
     
     # Create user
-    password_hash = hashlib.sha256(request.password.encode()).hexdigest()
+    password_hash = hash_password(request.password)
     
     if is_company:
         # Company emails: auto-verified + auto-admin
@@ -815,7 +818,7 @@ async def reset_password_with_token(request: ResetPasswordTokenRequest):
         raise HTTPException(status_code=400, detail="Link ist abgelaufen")
     
     # Update password
-    password_hash = hashlib.sha256(request.new_password.encode()).hexdigest()
+    password_hash = hash_password(request.new_password)
     cursor.execute("""
         UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL 
         WHERE id = ?

@@ -254,7 +254,7 @@ async def home(request: Request):
         return redirect
     """Main upload page"""
     user_info = get_user_info(request.session.get("user_id"))
-    return templates.TemplateResponse("index.html", {"request": request, "user": user_info})
+    return templates.TemplateResponse(request=request, name="index.html", context={"request": request, "user": user_info})
 
 @app.post("/api/upload", tags=["Jobs"])
 async def upload_files(request: Request, files: List[UploadFile] = File(default=[])):
@@ -309,36 +309,13 @@ async def upload_files(request: Request, files: List[UploadFile] = File(default=
     upload_path.mkdir(exist_ok=True)
 
     uploaded_files = []
-    from file_validation import validate_upload, safe_filename
+    from file_validation import save_pdf_upload
 
     for file in files:
-        # Inhalt einlesen und per Magic-Bytes validieren (PDF/PNG/JPG),
-        # Größenlimit prüfen – Dateiendung allein ist nicht vertrauenswürdig.
-        content = await file.read()
-        # Aktuell verarbeitet die Pipeline ausschließlich PDFs (siehe
-        # process_invoices_background -> glob("*.pdf")). Bild-Uploads (PNG/JPG)
-        # werden erst mit der OCR-Erweiterung in Phase 2 freigeschaltet –
-        # bis dahin abweisen, statt fälschlich Erfolg zu melden.
-        check = validate_upload(file.filename, content, allowed_exts={".pdf"})
-        if not check.ok:
-            app_logger.warning(
-                f"Upload abgelehnt ({file.filename}): {check.reason}"
-            )
-            continue
-
-        # Path-Traversal verhindern: nur sicheren Basenamen verwenden
-        fname = safe_filename(file.filename, fallback_ext=check.detected_ext)
-        file_path = upload_path / fname
-
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-
-        uploaded_files.append(
-            {
-                "filename": fname,
-                "size": file_path.stat().st_size,
-            }
-        )
+        try:
+            uploaded_files.append(await save_pdf_upload(file, upload_path))
+        except ValueError as exc:
+            app_logger.warning("Upload abgelehnt (%s): %s", file.filename, exc)
 
     # 3) Wenn keine einzige gültige Datei dabei war
     if not uploaded_files:
@@ -706,8 +683,8 @@ async def results_page(request: Request, job_id: str):
             raise JobNotFoundError(job_id)
     
     return templates.TemplateResponse(
-        "results.html",
-        {
+        request=request, name="results.html",
+        context={
             "request": request,
             "job_id": job_id,
             "job": job
@@ -768,8 +745,8 @@ async def health_check(request: Request):
     raw_json = json.dumps(data, indent=2, ensure_ascii=False)
 
     return templates.TemplateResponse(
-        "health.html",
-        {
+        request=request, name="health.html",
+        context={
             "request": request,
             "data": data,
             "backup_json": backup_json,
@@ -1163,7 +1140,7 @@ async def unified_dashboard(request: Request):
     # Show upgrade banner for Free/Starter users
     show_upgrade = invoice_access.get('plan') in ['free', 'starter'] or contract_access.get('plan') in ['free', 'starter']
     
-    return templates.TemplateResponse("dashboard.html", {
+    return templates.TemplateResponse(request=request, name="dashboard.html", context={
         "request": request,
         "user": user,
         "invoice_plan": invoice_access.get('plan', 'free').title(),
@@ -1196,7 +1173,7 @@ async def history_page(request: Request):
     stats = get_statistics(user_id=request.session["user_id"])
     
     user_info = get_user_info(request.session.get("user_id"))
-    return templates.TemplateResponse("history.html", {
+    return templates.TemplateResponse(request=request, name="history.html", context={
         "request": request,
         "jobs": jobs,
         "stats": stats,
@@ -1256,8 +1233,8 @@ async def job_details_page_old(request: Request, job_id: str):
     user_info = get_user_info(user_id)
     
     return templates.TemplateResponse(
-        "job_details.html",
-        {
+        request=request, name="job_details.html",
+        context={
             "request": request,
             "job_id": job_id,
             "job": job,
@@ -1283,7 +1260,7 @@ async def analytics_page(request: Request):
     data = get_analytics_data(user_id=user_id)
     
     user_info = get_user_info(request.session.get("user_id"))
-    return templates.TemplateResponse("analytics.html", {
+    return templates.TemplateResponse(request=request, name="analytics.html", context={
         "request": request,
         "stats": data['stats'],
         "monthly_labels": data['monthly_labels'],
@@ -1352,7 +1329,7 @@ async def admin_page(request: Request):
     # Audit-Logs
     audit_logs = get_audit_logs(limit=20)
     
-    return templates.TemplateResponse("admin.html", {
+    return templates.TemplateResponse(request=request, name="admin.html", context={
         "request": request,
         "stats": stats,
         "health": health,
@@ -1391,7 +1368,7 @@ async def admin_users_page(request: Request):
     new_this_week = cursor.fetchone()[0]
     conn.close()
     
-    return templates.TemplateResponse("admin_users.html", {
+    return templates.TemplateResponse(request=request, name="admin_users.html", context={
         "request": request,
         "users": users,
         "new_this_week": new_this_week
@@ -1467,7 +1444,7 @@ async def export_history_page(request: Request):
     stats = get_export_stats(user_id)
     
     user_info = get_user_info(request.session.get("user_id"))
-    return templates.TemplateResponse("export_history.html", {
+    return templates.TemplateResponse(request=request, name="export_history.html", context={
         "request": request,
         "exports": exports,
         "stats": stats,
@@ -1572,7 +1549,7 @@ async def get_supplier_patterns_endpoint(supplier: str):
 @app.get("/upload-progress", response_class=HTMLResponse)
 async def upload_progress_page(request: Request):
     """Upload page with real-time progress"""
-    return templates.TemplateResponse("upload_progress.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="upload_progress.html", context={"request": request})
 
 @app.get("/email-config", response_class=HTMLResponse)
 async def email_config_page(request: Request):
@@ -1581,7 +1558,7 @@ async def email_config_page(request: Request):
     
     config = get_email_config()
     
-    return templates.TemplateResponse("email_config.html", {
+    return templates.TemplateResponse(request=request, name="email_config.html", context={
         "request": request,
         "config": config
     })
@@ -1972,7 +1949,7 @@ async def demo_status(request: Request):
 @app.get("/demo", response_class=HTMLResponse)
 async def demo_page(request: Request):
     """Öffentliche Schwarzes-Loch-Demo ohne Login."""
-    return templates.TemplateResponse("demo.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="demo.html", context={"request": request})
 
 @app.post("/demo", response_class=HTMLResponse)
 async def demo_start(request: Request):
@@ -1988,8 +1965,8 @@ async def demo_job(request: Request):
     Statische Job-Seite für die kostenlose Demo mit zwei Beispielrechnungen.
     """
     return templates.TemplateResponse(
-        "demo_job.html",
-        {"request": request}
+        request=request, name="demo_job.html",
+        context={"request": request}
     )
 
 
@@ -1999,7 +1976,7 @@ async def login_page(request: Request):
     """Login page"""
     from csrf import get_csrf_token
     get_csrf_token(request)  # CSRF-Token in Session sicherstellen
-    return templates.TemplateResponse("login.html", {
+    return templates.TemplateResponse(request=request, name="login.html", context={
         "request": request,
         "error": None,
         "next": next_url
@@ -2046,8 +2023,8 @@ async def login_submit(request: Request, _csrf: None = Depends(require_csrf)):
             pass
         
         return templates.TemplateResponse(
-            "login.html",
-            {
+            request=request, name="login.html",
+            context={
                 "request": request,
                 "error": "Ungültige Email oder Passwort",
                 "next": next_url,
@@ -2112,7 +2089,7 @@ async def register_page(request: Request):
     """Register page"""
     from csrf import get_csrf_token
     get_csrf_token(request)  # CSRF-Token in Session sicherstellen
-    return templates.TemplateResponse("register.html", {
+    return templates.TemplateResponse(request=request, name="register.html", context={
         "request": request,
         "error": None,
         "next": next_url
@@ -2132,45 +2109,45 @@ async def register_submit(request: Request, _csrf: None = Depends(require_csrf))
     
     # Validation
     if not email or not password:
-        return templates.TemplateResponse("register.html", {
+        return templates.TemplateResponse(request=request, name="register.html", context={
             "request": request,
             "error": "Email und Passwort sind erforderlich"
         })
     
     if password != password2:
-        return templates.TemplateResponse("register.html", {
+        return templates.TemplateResponse(request=request, name="register.html", context={
             "request": request,
             "error": "Passwörter stimmen nicht überein"
         })
     
     # Enterprise Passwort-Anforderungen
     if len(password) < 8:
-        return templates.TemplateResponse("register.html", {
+        return templates.TemplateResponse(request=request, name="register.html", context={
             "request": request,
             "error": "Passwort muss mindestens 8 Zeichen haben"
         })
     
     import re
     if not re.search(r'[A-Z]', password):
-        return templates.TemplateResponse("register.html", {
+        return templates.TemplateResponse(request=request, name="register.html", context={
             "request": request,
             "error": "Passwort muss mindestens einen Großbuchstaben enthalten"
         })
     
     if not re.search(r'[a-z]', password):
-        return templates.TemplateResponse("register.html", {
+        return templates.TemplateResponse(request=request, name="register.html", context={
             "request": request,
             "error": "Passwort muss mindestens einen Kleinbuchstaben enthalten"
         })
     
     if not re.search(r'[0-9]', password):
-        return templates.TemplateResponse("register.html", {
+        return templates.TemplateResponse(request=request, name="register.html", context={
             "request": request,
             "error": "Passwort muss mindestens eine Zahl enthalten"
         })
     
     if email_exists(email):
-        return templates.TemplateResponse("register.html", {
+        return templates.TemplateResponse(request=request, name="register.html", context={
             "request": request,
             "error": "Email ist bereits registriert"
         })
@@ -2255,7 +2232,7 @@ async def unified_settings_page(request: Request):
     from database import get_user_by_id
     user = get_user_by_id(request.session['user_id'])
     
-    return templates.TemplateResponse("settings_unified.html", {
+    return templates.TemplateResponse(request=request, name="settings_unified.html", context={
         "request": request,
         "user": user
     })
@@ -2913,7 +2890,7 @@ async def checkout_success(request: Request, session_id: str = None):
         except Exception as e:
             app_logger.error(f"Error processing checkout: {e}")
     
-    return templates.TemplateResponse("checkout_success.html", {
+    return templates.TemplateResponse(request=request, name="checkout_success.html", context={
         "request": request
     })
 
@@ -3382,7 +3359,7 @@ async def contact_form(request: Request):
 
 @app.get("/test", response_class=HTMLResponse)
 async def test_upload_page(request: Request):
-    return templates.TemplateResponse("test_upload.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="test_upload.html", context={"request": request})
 
 
 
@@ -3398,7 +3375,7 @@ async def copilot_page(request: Request):
         return redirect
     
     user_info = get_user_info(request.session.get("user_id"))
-    return templates.TemplateResponse("copilot.html", {
+    return templates.TemplateResponse(request=request, name="copilot.html", context={
         "request": request,
         "user": user_info
     })
@@ -3420,7 +3397,7 @@ async def team_page(request: Request):
     if not is_admin_or_owner(user_id):
         return RedirectResponse("/dashboard?error=no_permission", status_code=303)
     user_info = get_user_info(user_id)
-    return templates.TemplateResponse("team.html", {"request": request, "user": user_info})
+    return templates.TemplateResponse(request=request, name="team.html", context={"request": request, "user": user_info})
 
 @app.get("/audit-log", response_class=HTMLResponse)
 async def audit_log_page(request: Request):
@@ -3432,7 +3409,7 @@ async def audit_log_page(request: Request):
     redirect = require_login(request)
     if redirect:
         return redirect
-    return templates.TemplateResponse("audit_log.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="audit_log.html", context={"request": request})
 
 
 @app.get("/accounting", response_class=HTMLResponse)
@@ -3454,7 +3431,7 @@ async def accounting_page(request: Request):
     conn.close()
     
     user_info = get_user_info(request.session.get("user_id"))
-    return templates.TemplateResponse("accounting.html", {"request": request, "jobs": jobs, "user": user_info})
+    return templates.TemplateResponse(request=request, name="accounting.html", context={"request": request, "jobs": jobs, "user": user_info})
 
 @app.post("/api/duplicate/{detection_id}/review")
 async def review_duplicate(detection_id: int, request: Request):
@@ -3590,7 +3567,7 @@ async def analytics_costs(request: Request):
     total_invoices = sum(j['total_files'] for j in jobs if j['total_files'])
     avg_cost_per_invoice = total_cost / total_invoices if total_invoices > 0 else 0
     
-    return templates.TemplateResponse("analytics_costs.html", {
+    return templates.TemplateResponse(request=request, name="analytics_costs.html", context={
         "request": request,
         "monthly_costs": monthly_costs,
         "jobs": jobs,
@@ -3818,8 +3795,8 @@ async def job_details_page(request: Request, job_id: str):
     user_info = get_user_info(user_id)
     
     return templates.TemplateResponse(
-        "job_details.html",
-        {
+        request=request, name="job_details.html",
+        context={
             "request": request,
             "job_id": job_id,
             "job": job,
@@ -3949,8 +3926,8 @@ async def password_reset_request_page(request: Request):
     get_csrf_token(request)  # CSRF-Token in Session sicherstellen
     next_url = request.query_params.get("next", "/login")
     return templates.TemplateResponse(
-        "password_reset_request.html",
-        {"request": request, "error": None,
+        request=request, name="password_reset_request.html",
+        context={"request": request, "error": None,
         "next": next_url, "success": None},
     )
 
@@ -3969,24 +3946,24 @@ async def password_reset_request_submit(request: Request, email: str = Form(...)
         # Kein User zu dieser Mail – nach außen trotzdem Erfolgsmeldung
         logger.warning("🔐 Password reset requested for unknown email: %s", email)
         return templates.TemplateResponse(
-            "password_reset_request.html",
-            {"request": request, "error": None,
+            request=request, name="password_reset_request.html",
+            context={"request": request, "error": None,
         "next": next_url, "success": generic_success},
         )
 
     try:
         send_password_reset_email(email, token)
         return templates.TemplateResponse(
-            "password_reset_request.html",
-            {"request": request, "error": None,
+            request=request, name="password_reset_request.html",
+            context={"request": request, "error": None,
         "next": next_url, "success": generic_success},
         )
     except Exception as e:
         logger.exception("❌ Fehler beim Versenden der Reset-E-Mail: %s", e)
         error = "Beim Versenden der E-Mail ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut."
         return templates.TemplateResponse(
-            "password_reset_request.html",
-            {"request": request, "error": error, "success": None},
+            request=request, name="password_reset_request.html",
+            context={"request": request, "error": error, "success": None},
         )
 
 
@@ -4011,8 +3988,8 @@ async def password_reset_confirm_page(request: Request):
         error = "Der Link ist ungültig oder abgelaufen."
 
     return templates.TemplateResponse(
-        "password_reset_confirm.html",
-        {
+        request=request, name="password_reset_confirm.html",
+        context={
             "request": request,
             "token": token,
             "token_valid": token_valid,
@@ -4044,8 +4021,8 @@ async def password_reset_confirm_submit(
     if not new_password or not confirm_password:
         error = "Bitte füllen Sie beide Passwort-Felder aus."
         return templates.TemplateResponse(
-            "password_reset_confirm.html",
-            {
+            request=request, name="password_reset_confirm.html",
+            context={
                 "request": request,
                 "token": token,
                 "token_valid": True,
@@ -4057,8 +4034,8 @@ async def password_reset_confirm_submit(
     if new_password != confirm_password:
         error = "Die Passwörter stimmen nicht überein."
         return templates.TemplateResponse(
-            "password_reset_confirm.html",
-            {
+            request=request, name="password_reset_confirm.html",
+            context={
                 "request": request,
                 "token": token,
                 "token_valid": True,
@@ -4070,8 +4047,8 @@ async def password_reset_confirm_submit(
     if len(new_password) < 8:
         error = "Das Passwort muss mindestens 8 Zeichen lang sein."
         return templates.TemplateResponse(
-            "password_reset_confirm.html",
-            {
+            request=request, name="password_reset_confirm.html",
+            context={
                 "request": request,
                 "token": token,
                 "token_valid": True,
@@ -4090,8 +4067,8 @@ async def password_reset_confirm_submit(
     if not ok:
         error = "Der Link ist ungültig oder abgelaufen."
         return templates.TemplateResponse(
-            "password_reset_confirm.html",
-            {
+            request=request, name="password_reset_confirm.html",
+            context={
                 "request": request,
                 "token": token,
                 "token_valid": False,
@@ -4102,8 +4079,8 @@ async def password_reset_confirm_submit(
 
     success = "Ihr Passwort wurde erfolgreich geändert. Sie können sich jetzt anmelden."
     return templates.TemplateResponse(
-        "password_reset_confirm.html",
-        {
+        request=request, name="password_reset_confirm.html",
+        context={
             "request": request,
             "token": token,
             "token_valid": False,
@@ -4120,7 +4097,7 @@ async def demo_job_page(request: Request, job_id: str):
     Öffentliche Demo-Seite für einen Job. Hier kann die kostenlose Demo
     ohne Login den Status einsehen (aktuell noch Platzhalter).
     """
-    return templates.TemplateResponse("demo_job.html", {
+    return templates.TemplateResponse(request=request, name="demo_job.html", context={
         "request": request,
         "job_id": job_id,
     })
@@ -5202,7 +5179,7 @@ async def get_subscription_info(request: Request):
 @app.get("/pricing", response_class=HTMLResponse)
 async def pricing_page(request: Request):
     """Preisübersicht"""
-    return templates.TemplateResponse("pricing.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="pricing.html", context={"request": request})
 
 @app.get("/billing", response_class=HTMLResponse)
 async def billing_page(request: Request):
@@ -5228,13 +5205,13 @@ async def export_history_page(request: Request):
 @app.get("/help", response_class=HTMLResponse)
 async def help_page(request: Request):
     """Hilfe & FAQ"""
-    return templates.TemplateResponse("help.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="help.html", context={"request": request})
 
 @app.get("/kontakt", response_class=HTMLResponse)
 @app.get("/contact", response_class=HTMLResponse)
 async def contact_page(request: Request):
     """Kontaktseite"""
-    return templates.TemplateResponse("contact.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="contact.html", context={"request": request})
 
 @app.get("/security", response_class=HTMLResponse)
 async def security_page(request: Request):
@@ -5255,7 +5232,7 @@ async def security_page(request: Request):
 @app.get("/copilot-demo", response_class=HTMLResponse)
 async def copilot_demo_page(request: Request):
     """Öffentliche Finance Copilot Demo - keine Registrierung erforderlich"""
-    return templates.TemplateResponse("copilot_demo.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="copilot_demo.html", context={"request": request})
 
 @app.get("/api/demo/copilot/status")
 async def copilot_demo_status(request: Request):
@@ -5526,7 +5503,7 @@ async def approvals_page(request: Request, status: str = None):
     # Get current user info
     user_info = get_user_info(user_id)
     
-    return templates.TemplateResponse("approvals.html", {
+    return templates.TemplateResponse(request=request, name="approvals.html", context={
         "request": request,
         "invoices": invoices,
         "total": total,
@@ -5551,7 +5528,7 @@ async def my_approvals_page(request: Request):
     stats = manager.get_approval_stats(user_id=user_id)
     user_info = get_user_info(user_id)
     
-    return templates.TemplateResponse("approvals_my.html", {
+    return templates.TemplateResponse(request=request, name="approvals_my.html", context={
         "request": request,
         "invoices": invoices,
         "stats": stats,
@@ -5727,7 +5704,7 @@ async def approval_rules_page(request: Request):
     rules = manager.get_all_rules()
     user_info = get_user_info(request.session.get("user_id"))
     
-    return templates.TemplateResponse("approval_rules.html", {
+    return templates.TemplateResponse(request=request, name="approval_rules.html", context={
         "request": request,
         "rules": rules,
         "user": user_info,
@@ -5827,7 +5804,7 @@ async def datev_export_page(request: Request):
     invoices = [dict(row) for row in cursor.fetchall()]
     conn.close()
     
-    return templates.TemplateResponse("datev_export.html", {
+    return templates.TemplateResponse(request=request, name="datev_export.html", context={
         "request": request,
         "user": user_info,
         "invoices": invoices,
@@ -6292,7 +6269,7 @@ async def zahlungen_dashboard(request: Request):
     service = get_zahlungs_service()
     dashboard = service.get_zahlungs_dashboard()
     
-    return templates.TemplateResponse("zahlungen_dashboard.html", {
+    return templates.TemplateResponse(request=request, name="zahlungen_dashboard.html", context={
         "request": request,
         "user": user_info,
         "dashboard": dashboard
@@ -6493,7 +6470,7 @@ async def api_zahlungen_sepa_export(request: Request):
 @app.get("/zugferd", response_class=HTMLResponse, tags=["Landing"])
 async def erechnung_landing(request: Request):
     """E-Rechnung 2025 Landing Page - SEO optimiert"""
-    return templates.TemplateResponse("landing_erechnung.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="landing_erechnung.html", context={"request": request})
 
 
 # =============================================================================
@@ -6549,7 +6526,7 @@ async def integrations_page(request: Request):
     for row in rows:
         integrations[row['provider']] = dict(row)
     
-    return templates.TemplateResponse("integrations.html", {
+    return templates.TemplateResponse(request=request, name="integrations.html", context={
         "request": request,
         "user": user_info,
         "integrations": integrations
@@ -6896,7 +6873,7 @@ async def mbr_page(request: Request):
     finally:
         conn.close()
     
-    return templates.TemplateResponse("mbr.html", {
+    return templates.TemplateResponse(request=request, name="mbr.html", context={
         "request": request,
         "user": user_info,
         "available_months": available_months,

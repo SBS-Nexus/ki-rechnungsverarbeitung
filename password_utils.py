@@ -49,8 +49,8 @@ def hash_password(password: str) -> str:
     if not isinstance(password, str):
         raise TypeError("password muss ein String sein")
 
-    if _HAS_BCRYPT:
-        pw = password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+    pw = password.encode("utf-8")
+    if _HAS_BCRYPT and len(pw) <= _BCRYPT_MAX_BYTES:
         return bcrypt.hashpw(pw, bcrypt.gensalt()).decode("utf-8")
     return _pbkdf2_hash(password)
 
@@ -87,13 +87,23 @@ def verify_password(password: str, stored_hash: str | None) -> bool:
         return False
 
 
-def needs_rehash(stored_hash: str | None) -> bool:
+def needs_rehash(stored_hash: str | None, password: str | None = None) -> bool:
     """True, wenn der Hash auf das aktuell bevorzugte Verfahren angehoben werden soll."""
     if not stored_hash or not isinstance(stored_hash, str):
         return True
-    if _HAS_BCRYPT:
-        return not stored_hash.startswith("$2")
-    return not stored_hash.startswith(_PBKDF2_ALGO + "$")
+    if stored_hash.startswith(_PBKDF2_ALGO + "$"):
+        try:
+            _, rounds, salt, digest = stored_hash.split("$")
+            return (
+                int(rounds) < _PBKDF2_ROUNDS
+                or len(bytes.fromhex(salt)) < _PBKDF2_SALT_BYTES
+                or len(bytes.fromhex(digest)) != 32
+            )
+        except (ValueError, TypeError):
+            return True
+    if stored_hash.startswith("$2") and _HAS_BCRYPT:
+        return password is not None and len(password.encode("utf-8")) > _BCRYPT_MAX_BYTES
+    return True
 
 
 # --- PBKDF2-Fallback -----------------------------------------------------
