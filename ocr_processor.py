@@ -134,10 +134,10 @@ class OCRProcessor:
             True if likely scanned, False otherwise
         """
         try:
-            import PyPDF2
+            import pypdf
             
             with open(pdf_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
+                reader = pypdf.PdfReader(file)
                 
                 # Sample first page
                 if len(reader.pages) > 0:
