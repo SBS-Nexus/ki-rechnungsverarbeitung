@@ -8,11 +8,11 @@ def extract_invoice_with_language(pdf_path: str, filename: str):
     Extract invoice with automatic language detection
     """
     from invoice_core import extract_from_pdf
-    import PyPDF2
+    import pypdf
     
     # Extract text for language detection
     with open(pdf_path, 'rb') as f:
-        reader = PyPDF2.PdfReader(f)
+        reader = pypdf.PdfReader(f)
         text = ""
         for page in reader.pages[:3]:  # First 3 pages
             text += page.extract_text()

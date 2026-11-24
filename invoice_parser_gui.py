@@ -11,7 +11,7 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
-import PyPDF2
+import pypdf
 import pandas as pd
 from datetime import datetime
 import threading
@@ -261,7 +261,7 @@ class InvoiceProcessorGUI:
     def extract_text_from_pdf(self, pdf_path):
         try:
             with open(pdf_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
+                reader = pypdf.PdfReader(file)
                 text = ""
                 for page in reader.pages:
                     text += page.extract_text()
