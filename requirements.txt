@@ -33,6 +33,10 @@ typing_extensions==4.15.0
 tzdata==2025.2
 anthropic
 python-pptx==1.0.2
+bcrypt==4.2.1
+SQLAlchemy==2.0.40
+alembic==1.14.1
+psycopg[binary]==3.2.6
 
 pytest
 pytest-asyncio

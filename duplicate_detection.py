@@ -241,26 +241,64 @@ Antworte NUR mit JSON:
         return []
 
 
-def detect_all_duplicates(invoice: dict, user_id: int = None) -> Dict:
+def _fetch_recent_supplier_invoices(invoice: dict, user_id: int = None, limit: int = 50) -> List[Dict]:
+    """Lädt Bestandsrechnungen des gleichen Lieferanten (nutzer-/mandantengefiltert)."""
+    conn = sqlite3.connect('invoices.db', check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    aussteller = invoice.get('rechnungsaussteller') or invoice.get('lieferant') or ''
+    if user_id:
+        cursor.execute('''
+            SELECT i.id, i.rechnungsnummer, i.datum, i.betrag_brutto, i.rechnungsaussteller
+            FROM invoices i JOIN jobs j ON i.job_id = j.job_id
+            WHERE j.user_id = ? AND LOWER(i.rechnungsaussteller) LIKE LOWER(?)
+            ORDER BY i.datum DESC LIMIT ?
+        ''', (user_id, f'%{aussteller}%', limit))
+    else:
+        cursor.execute('''
+            SELECT id, rechnungsnummer, datum, betrag_brutto, rechnungsaussteller
+            FROM invoices WHERE LOWER(rechnungsaussteller) LIKE LOWER(?)
+            ORDER BY datum DESC LIMIT ?
+        ''', (f'%{aussteller}%', limit))
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def detect_all_duplicates(invoice: dict, user_id: int = None, use_ai: bool = True) -> Dict:
     """
-    Complete duplicate detection: hash + AI
-    Returns: {'hash_duplicate': {...}, 'similar': [...]}
+    Complete duplicate detection: hash + deterministische Regeln + (optional) AI
+    Returns: {'hash_duplicate': {...}, 'rule_matches': [...], 'similar': [...]}
     """
     results = {
         'hash_duplicate': None,
+        'rule_matches': [],
         'similar': []
     }
-    
-    # 1. Hash-based check (fast, exact)
+
+    # 1. Hash-based check (schnell, exakt)
     hash_dup = check_duplicate_by_hash(invoice, user_id)
     if hash_dup:
         results['hash_duplicate'] = hash_dup
         logger.warning(f"🔴 Exact duplicate found: Invoice #{hash_dup['id']}")
-    
-    # 2. AI-based similarity (slower, fuzzy)
-    similar = check_similarity_ai(invoice, user_id)
-    if similar:
-        results['similar'] = similar
-        logger.warning(f"🟡 {len(similar)} similar invoice(s) found")
-    
+
+    # 2. Deterministische, verschärfte Regeln (ohne KI-Kosten):
+    #    fängt Wiedereinreichungen mit leicht abweichenden Feldern ab.
+    try:
+        from duplicate_rules import find_duplicate_candidates
+        existing = _fetch_recent_supplier_invoices(invoice, user_id)
+        rule_matches = find_duplicate_candidates(invoice, existing)
+        if rule_matches:
+            results['rule_matches'] = rule_matches
+            logger.warning(f"🟠 {len(rule_matches)} regelbasierte(r) Duplikat-Treffer")
+    except Exception as e:
+        logger.error(f"Regelbasierte Duplikatprüfung fehlgeschlagen: {e}")
+
+    # 3. AI-based similarity (slower, fuzzy) – nur wenn aktiviert
+    if use_ai:
+        similar = check_similarity_ai(invoice, user_id)
+        if similar:
+            results['similar'] = similar
+            logger.warning(f"🟡 {len(similar)} similar invoice(s) found")
+
     return results

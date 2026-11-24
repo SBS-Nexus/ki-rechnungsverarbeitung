@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from resend_config import resend_headers
+from password_utils import hash_password
 
 PAYLOAD = {"to": "recipient@example.invalid", "subject": "Synthetic",
            "html": "Synthetic test", "name": "Synthetic", "batch": 1}
@@ -78,7 +79,8 @@ class ResendConfigurationTest(unittest.TestCase):
             for arg in node.args.args:
                 arg.annotation = None
         namespace = {"hashlib": hashlib, "secrets": secrets, "datetime": datetime,
-                     "timedelta": timedelta, "resend_headers": resend_headers}
+                     "timedelta": timedelta, "resend_headers": resend_headers,
+                     "hash_password": hash_password}
         exec(compile(ast.fix_missing_locations(ast.Module(body=handlers, type_ignores=[])),
                      str(ROOT / "api_nexus.py"), "exec"), namespace)
         for configured in [False, True]:

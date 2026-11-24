@@ -79,7 +79,7 @@ limiter = RateLimiter()
 RATE_LIMITS = {
     "default": (60, 60),      # 60 Requests/Minute
     "upload": (10, 60),       # 10 Uploads/Minute
-    "auth": (5, 60),          # 5 Login-Versuche/Minute
+    "auth": (5, 900),         # 5 Login-Versuche / 15 Minuten (Brute-Force-Schutz)
     "export": (20, 60),       # 20 Exports/Minute
 }
 
