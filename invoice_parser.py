@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
-import PyPDF2
+import pypdf
 import pandas as pd
 from datetime import datetime
 import subprocess
@@ -16,7 +16,7 @@ client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 def extract_text_from_pdf(pdf_path):
     try:
         with open(pdf_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
+            reader = pypdf.PdfReader(file)
             text = ""
             for page in reader.pages:
                 text += page.extract_text()
