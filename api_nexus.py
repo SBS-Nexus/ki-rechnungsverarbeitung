@@ -10,13 +10,14 @@ import logging
 import sqlite3
 import json
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Header, Request
+from fastapi import APIRouter, HTTPException, Header, Request, Depends
+from nexus_auth import issue_nexus_token, require_nexus_access
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/nexus", tags=["Nexus Gateway Integration"])
+router = APIRouter(prefix="/api/nexus", tags=["Nexus Gateway Integration"],
+                   dependencies=[Depends(require_nexus_access)])
 
-NEXUS_API_KEY = os.getenv("NEXUS_API_KEY", "sbs_nexus_secret_2026")
 
 
 class InvoiceProcessRequest(BaseModel):
@@ -48,7 +49,10 @@ class DocumentClassifyResponse(BaseModel):
 
 
 def verify_api_key(authorization: str = Header(None)):
-    if not authorization or authorization != NEXUS_API_KEY:
+    expected_key = os.getenv("NEXUS_API_KEY", "").strip()
+    if not expected_key:
+        raise HTTPException(status_code=503, detail="Nexus API key is not configured")
+    if not authorization or authorization != expected_key:
         raise HTTPException(status_code=401, detail="Ungültiger API-Key")
     return {"id": 16, "email": "ki@sbsdeutschland.de", "is_admin": True}  # Default admin user for NEXUS_API_KEY
 
@@ -329,7 +333,7 @@ async def login(request: LoginRequest):
             "name": name or email.split("@")[0],
             "role": "admin" if is_admin else "user"
         },
-        "token": f"sbs_{user_id}_{hashlib.md5(email.encode()).hexdigest()[:8]}"
+        "token": issue_nexus_token(user_id)
     }
 
 @router.get("/auth/me")
@@ -659,26 +663,15 @@ async def register(request: RegisterRequest):
         conn.close()
         raise HTTPException(status_code=400, detail="E-Mail bereits registriert")
     
-    # Check if company email
-    is_company = request.email.endswith("@sbsdeutschland.de") or request.email.endswith("@sbsdeutschland.com")
-    
-    # Create user
+    # Public registration never grants administrative rights or skips verification.
+    is_company = False
     password_hash = hash_password(request.password)
-    
-    if is_company:
-        # Company emails: auto-verified + auto-admin
-        cursor.execute("""
-            INSERT INTO users (email, name, password_hash, is_admin, is_active, email_verified)
-            VALUES (?, ?, ?, 1, 1, 1)
-        """, (request.email, request.name, password_hash))
-    else:
-        # External emails: need verification
-        verification_token = secrets.token_urlsafe(32)
-        cursor.execute("""
-            INSERT INTO users (email, name, password_hash, is_admin, is_active, email_verified, verification_token)
-            VALUES (?, ?, ?, 0, 1, 0, ?)
-        """, (request.email, request.name, password_hash, verification_token))
-    
+    verification_token = secrets.token_urlsafe(32)
+    cursor.execute("""
+        INSERT INTO users (email, name, password_hash, is_admin, is_active, email_verified, verification_token)
+        VALUES (?, ?, ?, 0, 1, 0, ?)
+    """, (request.email, request.name, password_hash, verification_token))
+
     conn.commit()
     user_id = cursor.lastrowid
     conn.close()

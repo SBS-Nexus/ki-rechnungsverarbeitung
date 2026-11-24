@@ -72,6 +72,7 @@ def test_nexus_login_accepts_shared_hashes_and_upgrades_legacy(tmp_path):
         "HTTPException": HTTPException, "hashlib": hashlib,
         "hash_password": pw.hash_password, "verify_password": pw.verify_password,
         "needs_rehash": pw.needs_rehash,
+        "issue_nexus_token": lambda _: "synthetic-token-for-password-boundary-test",
     })
     password = "x" * 72 + "complete"
     for stored in [hashlib.sha256(password.encode()).hexdigest(), pw.hash_password(password)]:
